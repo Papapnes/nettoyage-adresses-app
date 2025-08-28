@@ -3,6 +3,33 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 
+# ---- Page & layout ----
+st.set_page_config(
+    page_title="Nettoyage d'adresses",
+    page_icon="🧹",
+    layout="centered",
+    menu_items={"Get Help": None, "Report a bug": None, "About": None},
+)
+
+# ---- CSS minimal (sans dépendances) ----
+st.markdown("""
+<style>
+.main .block-container {max-width: 980px; padding-top: 2rem; padding-bottom: 4rem;}
+h1 span.app-title {display:inline-block; font-weight: 800; letter-spacing:.2px;}
+p.sub {margin-top:-6px; color:#6b7280;}
+div[data-testid="stFileUploader"] > section {border:1px dashed #d1d5db; border-radius:14px; padding:18px 16px;}
+.stButton>button {border-radius:12px; padding:.7rem 1.2rem; font-weight:600;}
+.dataframe tbody td, .dataframe th {font-size:0.92rem;}
+.badge {display:inline-block;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;
+        padding:2px 8px;border-radius:999px;font-size:12px;margin-right:6px;}
+footer, #MainMenu {visibility:hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+# ---- En-tête ----
+st.markdown('<h1>🧹 <span class="app-title">Nettoyage d’adresses</span></h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub">Importez votre fichier CSV/XLSX, corrigez les adresses en 1 clic, puis téléchargez les résultats.</p>', unsafe_allow_html=True)
+
 # ---------- Dictionnaires / paramètres ----------
 words_to_remove = ["Canada","QC","Québec","Montréal","Qc","Quebec","Montreal"]
 postal_code_pattern = r'\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b'
@@ -111,31 +138,65 @@ def clean_pipeline(address):
     address = remove_duplicate_words_numbers(address)  # dédoublonnage final
     return address.title() if pd.notna(address) else address
 
-# ---------- UI ----------
-st.set_page_config(page_title="Nettoyage d'adresses", page_icon="🧹", layout="centered")
-st.title("🧹 Nettoyage d'adresses (CSV / Excel)")
-uploaded = st.file_uploader("Importer un fichier", type=["csv","xlsx"])
-rue_candidates = ["Rue","Adresse","Address","Street","street1","street_1","rue"]
+# ---------- UI améliorée ----------
+st.caption("Formats supportés : CSV / XLSX • Limite ~200 MB par fichier")
+
+with st.container():
+    uploaded = st.file_uploader("Importer un fichier", type=["csv","xlsx"], label_visibility="collapsed")
+
+with st.expander("📎 Comment préparer mon fichier ?", expanded=False):
+    st.markdown("""
+    - Le fichier doit contenir **au moins une colonne d’adresse** (ex. `Rue`, `Address`, `Adresse`).
+    - Une nouvelle colonne **`<colonne>_corrigee`** sera ajoutée avec le résultat.
+    """)
 
 if uploaded:
+    # lecture
     if uploaded.name.lower().endswith(".csv"):
         df = pd.read_csv(uploaded)
     else:
         df = pd.read_excel(uploaded)
-    st.write("Aperçu :", df.head())
 
+    # aperçu + badges colonnes
+    st.write("Aperçu :")
+    st.dataframe(df.head(), use_container_width=True)
+    cols = list(df.columns)
+    st.markdown("Colonnes détectées : " + " ".join([f'<span class="badge">{c}</span>' for c in cols]), unsafe_allow_html=True)
+
+    # sélection intelligente de la colonne
+    rue_candidates = ["Rue","Adresse","Address","Street","street1","street_1","rue"]
     default_col = next((c for c in df.columns if c in rue_candidates or c.lower() in [x.lower() for x in rue_candidates]), None)
-    col_rue = st.selectbox("Colonne à nettoyer :", options=list(df.columns), index=list(df.columns).index(default_col) if default_col in df.columns else 0)
+    col_rue = st.selectbox("Colonne à nettoyer :", options=cols,
+                           index=(cols.index(default_col) if default_col in cols else 0))
 
-    if st.button("Corriger"):
-        df[f"{col_rue}_corrigee"] = df[col_rue].apply(clean_pipeline)
-        st.success("Nettoyage terminé ✅")
-        st.write(df[[col_rue, f"{col_rue}_corrigee"]].head(50))
+    # action
+    run = st.button("✨ Corriger")
+    if run:
+        with st.spinner("Nettoyage en cours…"):
+            df[f"{col_rue}_corrigee"] = df[col_rue].apply(clean_pipeline)
 
-        csv_bytes = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("⬇️ Télécharger CSV corrigé", data=csv_bytes, file_name="adresses_corrigees.csv", mime="text/csv")
+        # stats
+        diff_count = (df[col_rue].fillna("").astype(str).str.strip()
+                      != df[f"{col_rue}_corrigee"].fillna("").astype(str).str.strip()).sum()
+        st.success(f"Terminé ✅  |  Lignes: {len(df):,}  •  Modifiées: {diff_count:,}")
 
+        st.write("Aperçu des corrections :")
+        st.dataframe(df[[col_rue, f"{col_rue}_corrigee"]].head(30), use_container_width=True)
+
+        # téléchargements (2 boutons côte à côte)
+        csv_bytes = df.to_csv(index=False, encoding="utf-8-sig")
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
             df.to_excel(writer, index=False, sheet_name="Adresses")
-        st.download_button("⬇️ Télécharger Excel corrigé", data=buffer.getvalue(), file_name="adresses_corrigees.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.download_button("⬇️ Télécharger CSV corrigé",
+                               data=csv_bytes, file_name="adresses_corrigees.csv", mime="text/csv")
+        with c2:
+            st.download_button("⬇️ Télécharger Excel corrigé",
+                               data=buffer.getvalue(),
+                               file_name="adresses_corrigees.xlsx",
+                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+else:
+    st.info("👆 Déposez votre fichier pour commencer (ou cliquez sur **Browse files**).")
