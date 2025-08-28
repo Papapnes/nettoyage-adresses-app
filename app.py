@@ -5,7 +5,7 @@ from io import BytesIO
 
 # ---- Page & layout ----
 st.set_page_config(
-    page_title="Nettoyage d'adresses",
+    page_title="Nettoyage d'adresses_Dev_by_Abdel_SPCA",
     page_icon="🧹",
     layout="centered",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
