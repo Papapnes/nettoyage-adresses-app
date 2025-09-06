@@ -30,8 +30,8 @@ footer, #MainMenu {visibility:hidden;}
 st.markdown("""
 <h1>
 🧹 <span class="app-title">Abdel_Data_Analyste_</span>
-<span style="font-size:1.6em; color:#ae0f27; font-weight:900;">SPCA</span>
-<span class="app-title">_Montréal (clean_address)</span>
+<span style="font-size:1.2em; color:#ae0f27; font-weight:900;">SPCA</span>
+<span class="app-title"></span>
 </h1>
 """, unsafe_allow_html=True)
 st.markdown('<p class="sub">Importez votre fichier CSV/XLSX, corrigez les adresses en 1 clic, puis téléchargez les résultats.</p>', unsafe_allow_html=True)
