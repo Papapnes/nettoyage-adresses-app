@@ -5,7 +5,7 @@ from io import BytesIO, StringIO
 
 # ---- Page & layout ----
 st.set_page_config(
-    page_title="Abdel_SPCA_Nettoyage d'adresses",
+    page_title="Abdel_Data_Analyste_SPCA_Montréal (clean_address)",
     page_icon="🧹",
     layout="centered",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
@@ -27,7 +27,7 @@ footer, #MainMenu {visibility:hidden;}
 """, unsafe_allow_html=True)
 
 # ---- En-tête ----
-st.markdown('<h1>🧹 <span class="app-title">Nettoyage d’adresses</span></h1>', unsafe_allow_html=True)
+st.markdown('<h1>🧹 <span class="app-title">Abdel_Data_Analyste_SPCA_Montréal (clean_address)</span></h1>', unsafe_allow_html=True)
 st.markdown('<p class="sub">Importez votre fichier CSV/XLSX, corrigez les adresses en 1 clic, puis téléchargez les résultats.</p>', unsafe_allow_html=True)
 
 # ============================
