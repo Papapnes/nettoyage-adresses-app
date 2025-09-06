@@ -1,26 +1,25 @@
+#Script applictio final sans API
+
 import re
-import time
-import json
 import pandas as pd
 import streamlit as st
-import requests
 from io import BytesIO, StringIO
 from collections import Counter
 from difflib import SequenceMatcher
-from functools import lru_cache
 
 # ---- Page & layout ----
 st.set_page_config(
-    page_title="Abdel_SPCA_Nettoyage d'adresses + Nominatim",
+    page_title="Abdel_appy_Clean_SPCA",
     page_icon="🧹",
-    layout="wide",
+    layout="centered",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
 
-# ---- CSS ----
+
+# ---- CSS minimal ----
 st.markdown("""
 <style>
-.main .block-container {max-width: 1280px; padding-top: 1.3rem; padding-bottom: 2.6rem;}
+.main .block-container {max-width: 1280px; padding-top: 1.5rem; padding-bottom: 3rem;}
 h1 span.app-title {display:inline-block; font-weight: 800; letter-spacing:.2px;}
 p.sub {margin-top:-6px; color:#6b7280;}
 div[data-testid="stFileUploader"] > section {border:1px dashed #d1d5db; border-radius:14px; padding:18px 16px;}
@@ -36,19 +35,27 @@ footer, #MainMenu {visibility:hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# ---- Header ----
-st.markdown('<h1>🧹 <span class="app-title">Nettoyage d’adresses</span></h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub">Pipeline local robuste + normalisation en ligne (Nominatim/OSM). Export, comparaison et stats inclus.</p>', unsafe_allow_html=True)
+# ---- En-tête ----
+st.markdown("""
+<h1>
+🧹 <span class="app-title">Abdel_Data_Analyste_</span>
+<span style="font-size:1.4em; color:#ae0f27; font-weight:900;">SPCA</span>
+<span class="app-title"></span>
+</h1>
+""", unsafe_allow_html=True)
+st.markdown('<p class="sub">Importez votre fichier CSV/XLSX, corrigez les adresses en 1 clic, puis téléchargez les résultats.</p>', unsafe_allow_html=True)
 
-# ==================================
-#  LECTURE ROBUSTE CSV / EXCEL
-# ==================================
+# ============================
+#  LECTURE ROBUSTE DE FICHIERS
+# ============================
 def read_any(uploaded_file) -> pd.DataFrame:
     name = uploaded_file.name.lower()
+    # Excel
     if name.endswith((".xlsx", ".xls")):
         uploaded_file.seek(0)
         return pd.read_excel(uploaded_file)
 
+    # CSV — 1) UTF-8, ',' puis ';'
     uploaded_file.seek(0)
     try:
         df = pd.read_csv(uploaded_file)
@@ -59,6 +66,7 @@ def read_any(uploaded_file) -> pd.DataFrame:
     except Exception:
         pass
 
+    # 2) UTF-8-SIG
     uploaded_file.seek(0)
     try:
         df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
@@ -69,6 +77,7 @@ def read_any(uploaded_file) -> pd.DataFrame:
     except Exception:
         pass
 
+    # 3) latin-1
     uploaded_file.seek(0)
     try:
         df = pd.read_csv(uploaded_file, encoding='latin-1')
@@ -79,6 +88,7 @@ def read_any(uploaded_file) -> pd.DataFrame:
     except Exception:
         pass
 
+    # 4) Fallback : sép. dominant
     uploaded_file.seek(0)
     data = uploaded_file.read()
     if not data:
@@ -87,9 +97,9 @@ def read_any(uploaded_file) -> pd.DataFrame:
     sep = ';' if text.count(';') > text.count(',') else ','
     return pd.read_csv(StringIO(text), sep=sep, engine='python')
 
-# ==================================
-#  PIPELINE LOCAL RENFORCÉ
-# ==================================
+# ======================
+#  PIPELINE RENFORCÉ
+# ======================
 WORDS_TO_REMOVE = ["Canada","QC","Québec","Montréal","Qc","Quebec","Montreal"]
 POSTAL_CODE_RE = r'\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b'
 
@@ -100,13 +110,15 @@ NOMS_FEMININS = ["Anne","Catherine","Claire","Élisabeth","Geneviève","Hélène
                  "Rosalie","Simone","Suzanne","Valérie"]
 
 VOIE_MAPPING_FULL = {
+    # français
     "Av": "Avenue", "Ave": "Avenue", "Ave.": "Avenue", "Av.": "Avenue", "Avé": "Avenue",
-    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard",
+    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard","bl ": "Boulevard",
     "Ch": "Chemin", "Cte": "Côte", "Prom": "Promenade", "Terr": "Terrasse", "Pl": "Place", "Rg": "Rang",
     "Cr": "Crois", "Crois": "Croissant", "Cres": "Croissant", "Cres.": "Croissant",
     "Rt": "Route", "Rd": "Route", "Rd.": "Route",
     "V": "Voie",
-    "St": "Street", "St.": "Street",
+    # anglais génériques
+    "St": "Saint", "St.": "Saint",
     "Dr": "Drive", "Dr.": "Drive",
     "Ln": "Lane", "Ln.": "Lane",
     "Hwy": "Highway", "Hwy.": "Highway",
@@ -142,6 +154,7 @@ KEEP_UPPER = {"N","S","E","O","NE","NO","SE","SO","W","NW","SW",
 
 STREET_TYPES_RE = r'(Rue|Avenue|Boulevard|Chemin|Place|Terrasse|Voie|Allée|Promenade|Côte|Rang|Route|Croissant|Crois|Street|Road|Drive|Lane|Court|Highway|Way|Trail|Esplanade)'
 
+# -- Étapes du pipeline (fonctions pures) --
 def clean_text(text):
     if pd.isna(text): return None
     text = re.sub(r'[.,;:/#&@"*|]', ' ', str(text))
@@ -274,6 +287,7 @@ def title_preserve_tokens(address):
     t = re.sub(r'\b([A-Za-z]{1,3})\b', fix_token, t)
     return t
 
+# --- Pipeline simple (prod) ---
 def clean_pipeline(address):
     if pd.isna(address): return address
     address = clean_text(address)
@@ -295,9 +309,43 @@ def clean_pipeline(address):
     address = title_preserve_tokens(address)
     return address
 
-# ==================================
+# --- Pipeline avec stats (diagnostic par règle) ---
+RULES = [
+    ("01_clean_text", clean_text),
+    ("02_clean_geo_postal", clean_address),
+    ("03_remove_unit_terms", remove_inline_unit_terms),
+    ("04_cap_after_number", capitalize_letter_after_number),
+    ("05_cardinals", replace_cardinal_directions),
+    ("06_Stdash_to_Saint", replace_st_with_saint_or_sainte),
+    ("07_expand_abbrev", expand_abbreviations),
+    ("08_fix_accents", correct_accents),
+    ("09_fix_compounds", correct_compounds),
+    ("10_norm_hyphen_apos", normalize_hyphens_apostrophes),
+    ("11_ordinals", standardize_ordinal_suffix),
+    ("12_move_trailing_number", move_trailing_apt_to_front),
+    ("13_drop_final_dupnum", remove_final_duplicate_number),
+    ("14_remove_unit_tail", remove_unit_terms_tail),
+    ("15_insert_default_Rue", ensure_street_type_if_missing),
+    ("16_dedupe_tokens", remove_duplicate_words_numbers),
+    ("17_title_preserve", title_preserve_tokens),
+]
+
+def run_pipeline_with_stats(s: str):
+    """
+    Retourne (final_string, set(des_noms_de_regles_appliquees))
+    """
+    applied = []
+    cur = s
+    for name, fn in RULES:
+        before = cur
+        cur = fn(cur)
+        if before != cur:
+            applied.append(name)
+    return cur, applied
+
+# ============================
 #  DÉTECTION AUTO DE COLONNE
-# ==================================
+# ============================
 def normalize_colname(c: str) -> str:
     return re.sub(r'[^a-z0-9]', '', str(c).strip().lower())
 
@@ -305,94 +353,27 @@ PREFERRED_KEYS = ["rue","adresse","address","street","street1","street_1","addr"
 
 def find_address_column(df: pd.DataFrame) -> str:
     norm_map = {c: normalize_colname(c) for c in df.columns}
+    # EXACT
     for key in PREFERRED_KEYS:
         keyn = normalize_colname(key)
         for col, norm in norm_map.items():
             if norm == keyn:
                 return col
+    # PARTIAL
     key_frags = ["rue","adress","address","street","addr"]
     candidates = [col for col, norm in norm_map.items() if any(k in norm for k in key_frags)]
     if candidates:
         return max(candidates, key=lambda c: df[c].notna().sum())
     raise ValueError("Colonne d'adresse introuvable. Colonnes : " + ", ".join(map(str, df.columns)))
 
-# ==================================
-#  NOMINATIM (OSM) — Normalisation
-# ==================================
-NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-
-# Respect du rate-limit : 1 req/s
-if "last_call_ts" not in st.session_state:
-    st.session_state.last_call_ts = 0.0
-
-def _respect_rate_limit(min_interval=1.0):
-    now = time.time()
-    elapsed = now - st.session_state.last_call_ts
-    if elapsed < min_interval:
-        time.sleep(min_interval - elapsed)
-    st.session_state.last_call_ts = time.time()
-
-@lru_cache(maxsize=5000)
-def nominatim_lookup(q: str, user_agent: str):
-    """
-    Retour brut JSON de Nominatim (cache par @lru_cache).
-    """
-    _respect_rate_limit(1.0)
-    headers = {"User-Agent": user_agent or "address-normalizer-example/1.0 (contact: you@example.com)"}
-    params = {
-        "q": q,
-        "format": "jsonv2",
-        "countrycodes": "ca",
-        "addressdetails": 1,
-        "limit": 1,
-    }
-    r = requests.get(NOMINATIM_URL, headers=headers, params=params, timeout=15)
-    r.raise_for_status()
-    data = r.json()
-    if isinstance(data, list) and data:
-        return data[0]
-    return None
-
-def build_canadian_string_from_osm(addr: dict) -> str:
-    """
-    Construit une chaîne 'canadian-like' à partir de address OSM:
-      'house_number street road, city, province, postcode'
-    """
-    if not addr:
-        return ""
-    hn = addr.get("house_number", "")
-    road = addr.get("road", "") or addr.get("pedestrian", "") or addr.get("footway", "")
-    # directionnel si dispo
-    predir = addr.get("road_direction", "")  # rarement présent
-    city = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("municipality") or ""
-    province = (addr.get("state_code") or "").upper() or addr.get("state") or ""
-    postcode = addr.get("postcode", "")
-
-    left = " ".join([x for x in [hn, predir, road] if x]).strip()
-    right = ", ".join([x for x in [city, province, postcode] if x]).strip(", ")
-    return f"{left}{(', ' + right) if right else ''}".strip()
-
-def normalize_with_nominatim(address: str, user_agent: str) -> str | None:
-    """
-    1) Requête Nominatim avec l'adresse (FR/EN).
-    2) Si résultat, formate en chaîne canadienne simple.
-    3) Retourne None si pas de résultat.
-    """
-    if not address or not address.strip():
-        return None
-    try:
-        res = nominatim_lookup(address, user_agent)
-        if not res or "address" not in res:
-            return None
-        candidate = build_canadian_string_from_osm(res["address"])
-        return candidate if candidate else (res.get("display_name") or None)
-    except Exception:
-        return None
-
-# ==================================
+# ==================
 #  OUTILS COMPARAISON
-# ==================================
+# ==================
 def diff_html(a: str, b: str) -> str:
+    """
+    Surlignage caractère-par-caractère (SequenceMatcher).
+    rouge = supprimé, vert = ajouté, normal = inchangé
+    """
     a = "" if pd.isna(a) else str(a)
     b = "" if pd.isna(b) else str(b)
     sm = SequenceMatcher(a=a, b=b)
@@ -408,36 +389,25 @@ def diff_html(a: str, b: str) -> str:
             out.append(f'<span class="del">{a[i1:i2]}</span><span class="ins">{b[j1:j2]}</span>')
     return '<div class="diff">' + "".join(out).replace(" ", "&nbsp;") + '</div>'
 
-# ==================================
-#  UI — SIDEBAR (Nominatim)
-# ==================================
-st.sidebar.header("🔗 Normalisation en ligne (OSM/Nominatim)")
-use_nominatim = st.sidebar.checkbox("Activer la normalisation en ligne", value=True)
-user_agent = st.sidebar.text_input(
-    "User-Agent (requis par Nominatim — mets un email de contact)",
-    value="nettoyage-adresses-app/1.0 (contact: you@example.com)"
-)
-st.sidebar.caption("⚠️ Respecte le quota : ~1 requête/seconde. Le traitement peut être plus lent avec l’API en ligne.")
-
-# ==================================
+# ==================
 #  UI PRINCIPALE
-# ==================================
+# ==================
 st.caption("Formats supportés : CSV / XLSX • Limite ~200 MB par fichier")
+
 uploaded = st.file_uploader("Importer un fichier", type=["csv","xlsx"], label_visibility="collapsed")
 
 with st.expander("📎 Conseils", expanded=False):
     st.markdown("""
-    - Le fichier doit contenir **au moins une colonne d’adresse** (`Rue`, `Address`, `Adresse`…).
-    - La sortie ajoute **`Rue_corrigee`** (pipeline local) et **`Rue_normalisee`** (si Nominatim activé).
+    - Le fichier doit contenir **au moins une colonne d’adresse** (ex. `Rue`, `Address`, `Adresse`).
+    - La sortie ajoute une colonne **`Rue_corrigee`**.
     - Aucune autre colonne n’est supprimée (ex. `donorbox receipt`, `constituant id`).
-    - OSM **≈** normalisation “meilleure effort” (gratuite) — pas 100% CPC/AddressComplete.
     """)
 
 if not uploaded:
-    st.info("👆 Déposez votre fichier pour commencer.")
+    st.info("👆 Déposez votre fichier pour commencer (ou cliquez sur **Browse files**).")
     st.stop()
 
-# Lecture
+# --- Lecture robuste ---
 try:
     df = read_any(uploaded)
 except Exception as e:
@@ -447,7 +417,7 @@ except Exception as e:
 cols = list(df.columns)
 st.markdown("Colonnes détectées : " + " ".join([f'<span class="badge">{c}</span>' for c in cols]), unsafe_allow_html=True)
 
-# Détection auto + override
+# Détection auto + override utilisateur
 try:
     auto_col = find_address_column(df)
 except Exception:
@@ -460,62 +430,39 @@ tab_clean, tab_compare, tab_stats = st.tabs(["✨ Nettoyage", "🪄 Comparaison"
 with tab_clean:
     st.write("Aperçu initial :")
     st.dataframe(df.head(), use_container_width=True)
-
     if st.button("Lancer le nettoyage", type="primary"):
-        with st.spinner("Nettoyage (local) en cours…"):
+        with st.spinner("Nettoyage en cours…"):
             df["Rue_corrigee"] = df[col_rue].apply(clean_pipeline)
-
-        if use_nominatim:
-            with st.spinner("Normalisation en ligne (OSM/Nominatim)…"):
-                # On normalise à partir de la version corrigée locale (plus propre pour le matching)
-                df["Rue_normalisee"] = df["Rue_corrigee"].astype(str).apply(
-                    lambda s: normalize_with_nominatim(s, user_agent)
-                )
-                # fallback: si None, on tente l’adresse d’origine
-                mask_none = df["Rue_normalisee"].isna() | (df["Rue_normalisee"] == "")
-                if mask_none.any():
-                    df.loc[mask_none, "Rue_normalisee"] = df.loc[mask_none, col_rue].astype(str).apply(
-                        lambda s: normalize_with_nominatim(s, user_agent)
-                    )
-
-        # Stats simples
-        diff_local = (df[col_rue].fillna("").astype(str).str.strip()
+        diff_count = (df[col_rue].fillna("").astype(str).str.strip()
                       != df["Rue_corrigee"].fillna("").astype(str).str.strip()).sum()
-        msg = f"Terminé ✅  |  Lignes: {len(df):,}  •  Modifiées (local): {diff_local:,}"
-        if use_nominatim and "Rue_normalisee" in df:
-            filled = df["Rue_normalisee"].fillna("").astype(str).str.strip() != ""
-            msg += f"  •  Normalisées (OSM): {filled.sum():,}"
-        st.success(msg)
+        st.success(f"Terminé ✅  |  Lignes: {len(df):,}  •  Modifiées: {diff_count:,}")
+        st.write("Aperçu des corrections :")
+        st.dataframe(df[[col_rue, "Rue_corrigee"]].head(30), use_container_width=True)
 
-        # Aperçu
-        show_cols = [col_rue, "Rue_corrigee"]
-        if use_nominatim and "Rue_normalisee" in df.columns:
-            show_cols.append("Rue_normalisee")
-        st.write("Aperçu :")
-        st.dataframe(df[show_cols].head(30), use_container_width=True)
-
-        # Exports
+        # exports
         c1, c2 = st.columns(2)
         with c1:
             csv_bytes = df.to_csv(index=False, encoding="utf-8-sig")
-            st.download_button("⬇️ Télécharger CSV", data=csv_bytes,
-                               file_name="adresses_nettoyees.csv", mime="text/csv")
+            st.download_button("⬇️ Télécharger CSV corrigé", data=csv_bytes,
+                               file_name="adresses_corrigees.csv", mime="text/csv")
         with c2:
             buf = BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                 df.to_excel(writer, index=False, sheet_name="Adresses")
-            st.download_button("⬇️ Télécharger Excel", data=buf.getvalue(),
-                               file_name="adresses_nettoyees.xlsx",
+            st.download_button("⬇️ Télécharger Excel corrigé", data=buf.getvalue(),
+                               file_name="adresses_corrigees.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tab_compare:
-    st.markdown("Compare **avant / après** (local) et, si activé, **OSM**. Surlignage : <span class='ins'>ajouts</span>, <span class='del'>suppressions</span>", unsafe_allow_html=True)
+    st.markdown("Compare **avant / après** avec surlignage : <span class='ins'>ajouts</span>, <span class='del'>suppressions</span>", unsafe_allow_html=True)
 
+    # S'assurer que Rue_corrigee existe
     if "Rue_corrigee" not in df.columns:
         st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
     else:
-        only_changed = st.checkbox("Afficher uniquement les lignes modifiées (local)", value=True)
-        limit = st.slider("Nombre de lignes à afficher", 10, 500, 100, 10)
+        only_changed = st.checkbox("Afficher uniquement les lignes modifiées", value=True)
+        search = st.text_input("Filtrer (contient)", "")
+        limit = st.slider("Nombre de lignes à afficher", min_value=10, max_value=500, value=100, step=10)
 
         view = df.copy()
         changed_mask = (view[col_rue].fillna("").astype(str).str.strip()
@@ -523,33 +470,33 @@ with tab_compare:
         if only_changed:
             view = view[changed_mask]
 
+        if search.strip():
+            mask = view[col_rue].fillna("").astype(str).str.contains(search, case=False) | \
+                   view["Rue_corrigee"].fillna("").astype(str).str.contains(search, case=False)
+            view = view[mask]
+
+        st.write(f"Résultats : {len(view):,} lignes")
         sample = view.head(limit)
 
+        # construire un tableau HTML des diffs
         rows = []
-        has_osm = "Rue_normalisee" in df.columns
         for _, r in sample.iterrows():
-            a = str(r[col_rue])
-            b = str(r["Rue_corrigee"])
-            local_html = diff_html(a, b)
-            osm_html = diff_html(b, str(r["Rue_normalisee"])) if has_osm else ""
+            a, b = str(r[col_rue]), str(r["Rue_corrigee"])
+            html = diff_html(a, b)
             rows.append(f"""
-            <tr>
-              <td>{a}</td>
-              <td>{b}</td>
-              <td>{local_html}</td>
-              <td>{(str(r["Rue_normalisee"]) if has_osm else '')}</td>
-              <td>{(osm_html if has_osm else '')}</td>
-            </tr>""")
-
-        header_osm = "<th>Rue_normalisee</th><th>Diff. Corrigée ➜ OSM</th>" if has_osm else "<th></th><th></th>"
+                <tr>
+                  <td>{a}</td>
+                  <td>{b}</td>
+                  <td>{html}</td>
+                </tr>
+            """)
         html_table = f"""
         <table style="width:100%; border-collapse:collapse;">
           <thead>
             <tr style="text-align:left; border-bottom:1px solid #e5e7eb;">
               <th style="padding:6px 4px;">{col_rue}</th>
               <th style="padding:6px 4px;">Rue_corrigee</th>
-              <th style="padding:6px 4px;">Diff. Original ➜ Corrigée</th>
-              {header_osm}
+              <th style="padding:6px 4px;">Différences</th>
             </tr>
           </thead>
           <tbody>
@@ -560,22 +507,62 @@ with tab_compare:
         st.markdown(html_table, unsafe_allow_html=True)
 
 with tab_stats:
-    st.markdown("**Stats** : modifications locales, et (si activé) taux de normalisation OSM.")
-
+    st.markdown("Comptage **par règle du pipeline** (diagnostic exhaustif).")
     if "Rue_corrigee" not in df.columns:
-        st.warning("⚠️ Lance d’abord le nettoyage.")
+        st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
     else:
+        # Exécuter le pipeline avec stats sur TOUTES les lignes (peut prendre un peu de temps selon la taille)
+        with st.spinner("Analyse des règles appliquées…"):
+            applied_list = []
+            finals = []
+            for s in df[col_rue].astype(str).fillna(""):
+                final, applied = run_pipeline_with_stats(s)
+                finals.append(final)
+                applied_list.append(applied)
+
+        # Agréger les stats
+        c = Counter()
+        for L in applied_list:
+            c.update(L)
+        stats_df = pd.DataFrame(
+            {"regle": list(c.keys()), "comptage": list(c.values())}
+        ).sort_values("comptage", ascending=False)
+
         mod_count = (df[col_rue].fillna("").astype(str).str.strip()
-                     != df["Rue_corrigee"].fillna("").astype(str).str.strip()).sum()
-        pct_mod = 100.0 * mod_count / len(df) if len(df) else 0.0
-        m1, m2, m3 = st.columns(3)
+                     != pd.Series(finals).fillna("").astype(str).str.strip()).sum()
+        pct = 100.0 * mod_count / len(df) if len(df) else 0.0
+
+        # Affichage
+        m1, m2 = st.columns(2)
         with m1:
-            st.metric("Total lignes", f"{len(df):,}")
+            st.metric("Lignes modifiées", f"{mod_count:,}", delta=f"{pct:.1f}%")
         with m2:
-            st.metric("Modifiées (local)", f"{mod_count:,}", delta=f"{pct_mod:.1f}%")
-        with m3:
-            if "Rue_normalisee" in df.columns:
-                ok = df["Rue_normalisee"].fillna("").astype(str).str.strip() != ""
-                st.metric("Normalisées (OSM)", f"{ok.sum():,}")
-            else:
-                st.metric("Normalisées (OSM)", "—")
+            st.metric("Total lignes", f"{len(df):,}")
+
+        st.write("**Top règles appliquées :**")
+        st.dataframe(stats_df, use_container_width=True, height=360)
+
+        # Petit bar chart
+        try:
+            st.bar_chart(stats_df.set_index("regle")["comptage"])
+        except Exception:
+            pass
+
+        # Rapport exportable : binaire par règle
+        st.write("**Rapport diagnostics (binaire par ligne et par règle)**")
+        diag_df = df.copy()
+        # colonnes binaires par règle
+        for name, _ in RULES:
+            diag_df[name] = [int(name in applied) for applied in applied_list]
+        diag_df["Rue_corrigee_stats"] = finals
+
+        bufx = BytesIO()
+        with pd.ExcelWriter(bufx, engine="xlsxwriter") as writer:
+            diag_df.to_excel(writer, index=False, sheet_name="Diagnostics")
+            stats_df.to_excel(writer, index=False, sheet_name="Stats")
+        st.download_button(
+            "⬇️ Télécharger rapport diagnostics (Excel)",
+            data=bufx.getvalue(),
+            file_name="rapport_diagnostics_adresses.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
