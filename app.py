@@ -7,11 +7,12 @@ from difflib import SequenceMatcher
 
 # ---- Page & layout ----
 st.set_page_config(
-    page_title="Abdel_SPCA_Nettoyage d'adresses",
+    page_title="Abdel_appy_Clean_SPCA",
     page_icon="🧹",
-    layout="wide",
+    layout="centered",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
+
 
 # ---- CSS minimal ----
 st.markdown("""
@@ -33,8 +34,14 @@ footer, #MainMenu {visibility:hidden;}
 """, unsafe_allow_html=True)
 
 # ---- En-tête ----
-st.markdown('<h1>🧹 <span class="app-title">Nettoyage d’adresses</span></h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub">Importez votre fichier CSV/XLSX, nettoyez, comparez les différences et exportez les résultats.</p>', unsafe_allow_html=True)
+st.markdown("""
+<h1>
+🧹 <span class="app-title">Abdel_Data_Analyste_</span>
+<span style="font-size:1.2em; color:#ae0f27; font-weight:900;">SPCA</span>
+<span class="app-title"></span>
+</h1>
+""", unsafe_allow_html=True)
+st.markdown('<p class="sub">Importez votre fichier CSV/XLSX, corrigez les adresses en 1 clic, puis téléchargez les résultats.</p>', unsafe_allow_html=True)
 
 # ============================
 #  LECTURE ROBUSTE DE FICHIERS
