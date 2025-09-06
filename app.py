@@ -1,7 +1,7 @@
 import re
 import pandas as pd
 import streamlit as st
-from io import BytesIO
+from io import BytesIO, StringIO
 
 # ---- Page & layout ----
 st.set_page_config(
@@ -30,7 +30,73 @@ footer, #MainMenu {visibility:hidden;}
 st.markdown('<h1>🧹 <span class="app-title">Nettoyage d’adresses</span></h1>', unsafe_allow_html=True)
 st.markdown('<p class="sub">Importez votre fichier CSV/XLSX, corrigez les adresses en 1 clic, puis téléchargez les résultats.</p>', unsafe_allow_html=True)
 
-# ---------- Dictionnaires / paramètres (pipeline renforcé) ----------
+# ============================
+#  LECTURE ROBUSTE DE FICHIERS
+# ============================
+def read_any(uploaded_file) -> pd.DataFrame:
+    """
+    Lecture robuste CSV/XLSX :
+      - XLS/XLSX : read_excel direct
+      - CSV : essais encodages (utf-8, utf-8-sig, latin-1) et séparateurs (',' puis ';')
+      - remet le pointeur avec seek(0) entre les essais
+      - fallback par détection simple du séparateur dominant
+    Évite pandas.errors.EmptyDataError dû au pointeur en fin de fichier.
+    """
+    name = uploaded_file.name.lower()
+    # Excel
+    if name.endswith(".xlsx") or name.endswith(".xls"):
+        uploaded_file.seek(0)
+        return pd.read_excel(uploaded_file)
+
+    # CSV — 1) UTF-8, ',' puis ';'
+    uploaded_file.seek(0)
+    try:
+        df = pd.read_csv(uploaded_file)
+        if df.shape[1] == 1:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, sep=';', engine='python')
+        return df
+    except pd.errors.EmptyDataError:
+        pass
+    except UnicodeDecodeError:
+        pass
+    except Exception:
+        pass
+
+    # 2) UTF-8-SIG
+    uploaded_file.seek(0)
+    try:
+        df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+        if df.shape[1] == 1:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, encoding='utf-8-sig', sep=';', engine='python')
+        return df
+    except Exception:
+        pass
+
+    # 3) latin-1
+    uploaded_file.seek(0)
+    try:
+        df = pd.read_csv(uploaded_file, encoding='latin-1')
+        if df.shape[1] == 1:
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, encoding='latin-1', sep=';', engine='python')
+        return df
+    except Exception:
+        pass
+
+    # 4) Fallback : lire en texte, détecter séparateur simple
+    uploaded_file.seek(0)
+    data = uploaded_file.read()
+    if not data:
+        raise pd.errors.EmptyDataError("Fichier vide.")
+    text = data.decode('utf-8', errors='ignore')
+    sep = ';' if text.count(';') > text.count(',') else ','
+    return pd.read_csv(StringIO(text), sep=sep, engine='python')
+
+# ======================
+#  PIPELINE RENFORCÉ
+# ======================
 WORDS_TO_REMOVE = ["Canada","QC","Québec","Montréal","Qc","Quebec","Montreal"]
 POSTAL_CODE_RE = r'\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b'
 
@@ -198,7 +264,7 @@ def ensure_street_type_if_missing(address):
     """
     if pd.isna(address): return address
     has_type = re.search(r'\b' + STREET_TYPES_RE + r'\b', address, flags=re.IGNORECASE)
-    if has_type: 
+    if has_type:
         return address
     m = re.match(r'^\s*(\d+[A-Za-z]?)\s+([A-Za-zÀ-ÖØ-öø-ÿ\-’]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ\-’]+)*)$', address)
     if m:
@@ -223,6 +289,8 @@ def title_preserve_tokens(address):
     # préserver ordinaux (1RE/2E/…)
     t = re.sub(r'\b(\d+R?E)\b', lambda m: m.group(1).upper(), t)
     # préserver points cardinaux/provinces
+    KEEP_UPPER = {"N","S","E","O","NE","NO","SE","SO","W","NW","SW",
+                  "QC","ON","BC","AB","SK","MB","NB","NS","NL","PE","YT","NT","NU"}
     def fix_token(m):
         tok = m.group(0); up = tok.upper()
         return up if up in KEEP_UPPER else tok
@@ -250,7 +318,9 @@ def clean_pipeline(address):
     address = title_preserve_tokens(address)
     return address
 
-# ---------- Détection auto de la colonne d’adresse ----------
+# ============================
+#  DÉTECTION AUTO DE COLONNE
+# ============================
 def normalize_colname(c: str) -> str:
     return re.sub(r'[^a-z0-9]', '', str(c).strip().lower())
 
@@ -272,7 +342,9 @@ def find_address_column(df: pd.DataFrame) -> str:
     # 3) échec
     raise ValueError("Colonne d'adresse introuvable. Colonnes disponibles : " + ", ".join(map(str, df.columns)))
 
-# ---------- UI ----------
+# ==================
+#  UI PRINCIPALE
+# ==================
 st.caption("Formats supportés : CSV / XLSX • Limite ~200 MB par fichier")
 
 with st.container():
@@ -286,16 +358,12 @@ with st.expander("📎 Comment préparer mon fichier ?", expanded=False):
     """)
 
 if uploaded:
-    # lecture robuste CSV (essaie "," puis ";")
-    if uploaded.name.lower().endswith(".csv"):
-        try:
-            df = pd.read_csv(uploaded)
-            if df.shape[1] == 1:  # mauvais séparateur probable
-                df = pd.read_csv(uploaded, sep=';')
-        except Exception:
-            df = pd.read_csv(uploaded, sep=';')
-    else:
-        df = pd.read_excel(uploaded)
+    # --- Lecture robuste ---
+    try:
+        df = read_any(uploaded)
+    except Exception as e:
+        st.error(f"Impossible de lire le fichier : {e}")
+        st.stop()
 
     # aperçu + badges colonnes
     st.write("Aperçu :")
@@ -323,7 +391,7 @@ if uploaded:
         st.write("Aperçu des corrections :")
         st.dataframe(df[[col_rue, "Rue_corrigee"]].head(30), use_container_width=True)
 
-        # téléchargements (2 boutons)
+        # téléchargements
         csv_bytes = df.to_csv(index=False, encoding="utf-8-sig")
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
