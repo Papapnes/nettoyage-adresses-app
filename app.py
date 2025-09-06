@@ -6,7 +6,7 @@ from io import BytesIO, StringIO
 # ---- Page & layout ----
 st.set_page_config(
     page_title="Abdel_appy_Clean_SPCA",
-    page_icon="🧽",
+    page_icon="🧹",
     layout="centered",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
@@ -29,7 +29,7 @@ footer, #MainMenu {visibility:hidden;}
 # ---- En-tête ----
 st.markdown("""
 <h1>
-🧽 <span class="app-title">Abdel_Data_Analyste_</span>
+🧹 <span class="app-title">Abdel_Data_Analyste_</span>
 <span style="font-size:1.2em; color:#ae0f27; font-weight:900;">SPCA</span>
 <span class="app-title"></span>
 </h1>
