@@ -109,13 +109,13 @@ NOMS_FEMININS = ["Anne","Catherine","Claire","Élisabeth","Geneviève","Hélène
 VOIE_MAPPING_FULL = {
     # français
     "Av": "Avenue", "Ave": "Avenue", "Ave.": "Avenue", "Av.": "Avenue", "Avé": "Avenue",
-    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard",
+    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard", "bl ": "Boulevard",
     "Ch": "Chemin", "Cte": "Côte", "Prom": "Promenade", "Terr": "Terrasse", "Pl": "Place", "Rg": "Rang",
     "Cr": "Crois", "Crois": "Croissant", "Cres": "Croissant", "Cres.": "Croissant",
     "Rt": "Route", "Rd": "Route", "Rd.": "Route",
     "V": "Voie",
     # anglais génériques
-    "St": "Street", "St.": "Street",    # 'St-' avec tiret géré ailleurs (Saint/Sainte)
+    "St": "Saint", "St.": "Saint",    # 'St-' avec tiret géré ailleurs (Saint/Sainte)
     "Dr": "Drive", "Dr.": "Drive",
     "Ln": "Lane", "Ln.": "Lane",
     "Hwy": "Highway", "Hwy.": "Highway",
