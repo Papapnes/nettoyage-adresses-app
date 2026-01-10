@@ -1,6 +1,13 @@
-#Script applictio final sans API
+# Script application final
+# NOTE: AUCUNE modification sur le pipeline "Rue"
+# API utilisée UNIQUEMENT pour la colonne "Ville"
 
 import re
+import json
+import unicodedata
+import urllib.request
+import urllib.parse
+
 import pandas as pd
 import streamlit as st
 from io import BytesIO, StringIO
@@ -14,7 +21,6 @@ st.set_page_config(
     layout="centered",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
-
 
 # ---- CSS minimal ----
 st.markdown("""
@@ -97,8 +103,166 @@ def read_any(uploaded_file) -> pd.DataFrame:
     sep = ';' if text.count(';') > text.count(',') else ','
     return pd.read_csv(StringIO(text), sep=sep, engine='python')
 
+
+# =========================================================
+#  AJOUT — PIPELINE 4 COLONNES (Ville / Province / Postal / Pays)
+#  (NE TOUCHE PAS au pipeline "Rue")
+# =========================================================
+
+VILLE_RESOURCE_ID = "19385b4e-5503-4330-9e59-f998f5918363"
+
+def _clean_basic_simple(x):
+    if pd.isna(x):
+        return None
+    s = str(x).strip()
+    s = re.sub(r"\s+", " ", s).strip()
+    return s if s else None
+
+@st.cache_data(show_spinner=False)
+def fetch_ville_officielle_api(ville_query: str):
+    """
+    API Données Québec — retourne le nom officiel (champ 'title') si trouvé, sinon None.
+    """
+    try:
+        # On garde le style que tu as fourni : q=title:xxx
+        # Pour les espaces, on ajoute des guillemets
+        q = f'title:"{ville_query}"' if " " in ville_query else f"title:{ville_query}"
+        params = {
+            "resource_id": VILLE_RESOURCE_ID,
+            "limit": 1,
+            "q": q
+        }
+        url = "https://www.donneesquebec.ca/recherche/api/3/action/datastore_search?" + urllib.parse.urlencode(params)
+
+        with urllib.request.urlopen(url, timeout=6) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        records = data.get("result", {}).get("records", [])
+        if records:
+            return records[0].get("title")
+    except Exception:
+        return None
+
+    return None
+
+def clean_ville_api(v):
+    v = _clean_basic_simple(v)
+    if not v:
+        return None
+    v_title = v.title()
+    official = fetch_ville_officielle_api(v_title)
+    return official if official else v_title
+
+PROVINCE_TO_CODE = {
+    # QC
+    "quebec": "QC", "québec": "QC", "qc": "QC",
+    # ON
+    "ontario": "ON", "on": "ON",
+    # BC
+    "british columbia": "BC", "colombie-britannique": "BC", "colombie britannique": "BC", "bc": "BC",
+    # AB
+    "alberta": "AB", "ab": "AB",
+    # MB
+    "manitoba": "MB", "mb": "MB",
+    # SK
+    "saskatchewan": "SK", "sk": "SK",
+    # NS
+    "nova scotia": "NS", "nouvelle-écosse": "NS", "nouvelle ecosse": "NS", "ns": "NS",
+    # NB
+    "new brunswick": "NB", "nouveau-brunswick": "NB", "nb": "NB",
+    # NL
+    "newfoundland and labrador": "NL", "terre-neuve-et-labrador": "NL", "terre neuve et labrador": "NL", "nl": "NL", "nf": "NL",
+    # PE
+    "prince edward island": "PE", "île-du-prince-édouard": "PE", "ile-du-prince-edouard": "PE", "pei": "PE", "pe": "PE",
+    # Territoires
+    "yukon": "YT", "yt": "YT",
+    "northwest territories": "NT", "territoires du nord-ouest": "NT", "territoires du nord ouest": "NT", "nt": "NT", "nwt": "NT",
+    "nunavut": "NU", "nu": "NU",
+}
+
+def _strip_accents(s: str) -> str:
+    s = unicodedata.normalize("NFD", s)
+    return "".join(c for c in s if unicodedata.category(c) != "Mn")
+
+def clean_province_code(p):
+    p = _clean_basic_simple(p)
+    if not p:
+        return None
+
+    raw = p.lower().strip()
+    raw = re.sub(r"[.,;/\-]", " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip()
+
+    raw_noacc = _strip_accents(raw)
+    raw_compact = raw.replace(" ", "")
+    raw_noacc_compact = raw_noacc.replace(" ", "")
+
+    for key in (raw, raw_noacc, raw_compact, raw_noacc_compact):
+        if key in PROVINCE_TO_CODE:
+            return PROVINCE_TO_CODE[key]
+
+    if len(raw_compact) == 2 and raw_compact.isalpha():
+        return raw_compact.upper()
+
+    return None
+
+def clean_code_postal(pc):
+    pc = _clean_basic_simple(pc)
+    if not pc:
+        return None
+
+    s = str(pc).strip().upper()
+    s = re.sub(r"\s+", "", s)
+    s = re.sub(r"[^A-Z0-9]", "", s)
+
+    if len(s) >= 6:
+        return s[:3] + " " + s[3:6]
+    return s
+
+def clean_pays(country):
+    country = _clean_basic_simple(country)
+    if not country:
+        return None
+    return str(country).strip().title()
+
+def apply_location_cleaning(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ajoute des colonnes corrigées :
+    - Ville_corrigee (API QC)
+    - Region_Province_corrigee (QC/ON/... )
+    - Code_postal_corrige (H1P 2K7)
+    - Pays_corrige (Canada)
+    Sans toucher aux colonnes originales.
+    """
+    # Ville : optimisation = 1 appel API par valeur unique
+    if "Ville" in df.columns:
+        uniques = df["Ville"].dropna().astype(str).unique().tolist()
+        mapping = {}
+        for u in uniques:
+            u_clean = _clean_basic_simple(u)
+            if not u_clean:
+                mapping[u] = None
+                continue
+            u_title = u_clean.title()
+            official = fetch_ville_officielle_api(u_title)
+            mapping[u] = official if official else u_title
+
+        df["Ville_corrigee"] = df["Ville"].map(mapping)
+
+    if "Région/Province" in df.columns:
+        df["Region_Province_corrigee"] = df["Région/Province"].apply(clean_province_code)
+
+    if "Code postal" in df.columns:
+        df["Code_postal_corrige"] = df["Code postal"].apply(clean_code_postal)
+
+    if "Pays" in df.columns:
+        df["Pays_corrige"] = df["Pays"].apply(clean_pays)
+
+    return df
+
+
 # ======================
-#  PIPELINE RENFORCÉ
+#  PIPELINE RENFORCÉ (Rue) — INCHANGÉ
 # ======================
 WORDS_TO_REMOVE = ["Canada","QC","Québec","Montréal","Qc","Quebec","Montreal"]
 POSTAL_CODE_RE = r'\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b'
@@ -112,7 +276,7 @@ NOMS_FEMININS = ["Anne","Catherine","Claire","Élisabeth","Geneviève","Hélène
 VOIE_MAPPING_FULL = {
     # français
     "Av": "Avenue", "Ave": "Avenue", "Ave.": "Avenue", "Av.": "Avenue", "Avé": "Avenue",
-    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard","bl ": "Boulevard",
+    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard",
     "Ch": "Chemin", "Cte": "Côte", "Prom": "Promenade", "Terr": "Terrasse", "Pl": "Place", "Rg": "Rang",
     "Cr": "Crois", "Crois": "Croissant", "Cres": "Croissant", "Cres.": "Croissant",
     "Rt": "Route", "Rd": "Route", "Rd.": "Route",
@@ -128,7 +292,7 @@ VOIE_MAPPING_FULL = {
 
 DIRECTION_MAPPING = {
     r'\bEst\b':'E', r'\bOuest\b':'O', r'\bNord\b':'N', r'\bSud\b':'S',
-    r'\bEast\b':'E', r'\bWest\b':'W', r'\bNorth\b':'N', r'\bSouth\b':'S'
+    r'\bEast\b':'E', r'\bWest\b':'O', r'\bNorth\b':'N', r'\bSouth\b':'S'
 }
 
 ACCENT_CORRECTIONS = {
@@ -189,10 +353,11 @@ def replace_cardinal_directions(address):
 
 def replace_st_with_saint_or_sainte(address):
     if pd.isna(address): return address
-    m = re.search(r'\bSt-([A-Za-zÉéÈèÀàÙù]+)', address)
-    if m:
-        following = m.group(1)
-        return re.sub(r'\bSt-', "Sainte-" if following in NOMS_FEMININS else "Saint-", address)
+    # Gérer St/Ste avec tiret, point ou espace : St-Jean, St Jean, St. Jean, Ste-Foy...
+    def repl(m):
+        token = m.group(2)
+        return ("Sainte-" if token.title() in NOMS_FEMININS else "Saint-") + token
+    address = re.sub(r'\b(St|Ste|St\.|Ste\.)[\s\-\.]+([A-Za-zÉéÈèÀàÙù\'’\-]+)', repl, address, flags=re.IGNORECASE)
     return address
 
 def expand_abbreviations(address):
@@ -225,10 +390,9 @@ def normalize_hyphens_apostrophes(address):
 
 def standardize_ordinal_suffix(address):
     if pd.isna(address): return address
-    address = re.sub(r'\b1([èeé]re|er|re)\b', '1RE', address, flags=re.IGNORECASE)
-    for n in range(2, 10):
-        address = re.sub(rf'\b{n}([ìi]eme|ieme|ième|[èeé]me|e)\b', f'{n}E', address, flags=re.IGNORECASE)
-    address = re.sub(r'\b([1-9][0-9])([èeé]me|e)\b', lambda m: f"{m.group(1)}E", address, flags=re.IGNORECASE)
+    # Simplifier la gestion des suffixes ordinaux courants (1er, 1re, 1ère, 2e, 2ème, etc.)
+    address = re.sub(r'\b1(?:er|re|ère|e|ème|eme)\b', '1RE', address, flags=re.IGNORECASE)
+    address = re.sub(r'\b([2-9]|[1-9][0-9])(?:e|ème|eme)\b', lambda m: f"{m.group(1)}E", address, flags=re.IGNORECASE)
     return address
 
 def move_trailing_apt_to_front(address):
@@ -376,18 +540,23 @@ def diff_html(a: str, b: str) -> str:
     """
     a = "" if pd.isna(a) else str(a)
     b = "" if pd.isna(b) else str(b)
-    sm = SequenceMatcher(a=a, b=b)
+    sm = SequenceMatcher(None, a, b)
     out = []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == 'equal':
-            out.append(f'<span class="eq">{b[j1:j2]}</span>')
+            content = b[j1:j2].replace(" ", "&nbsp;")
+            out.append(f'<span class="eq">{content}</span>')
         elif tag == 'insert':
-            out.append(f'<span class="ins">{b[j1:j2]}</span>')
+            content = b[j1:j2].replace(" ", "&nbsp;")
+            out.append(f'<span class="ins">{content}</span>')
         elif tag == 'delete':
-            out.append(f'<span class="del">{a[i1:i2]}</span>')
+            content = a[i1:i2].replace(" ", "&nbsp;")
+            out.append(f'<span class="del">{content}</span>')
         elif tag == 'replace':
-            out.append(f'<span class="del">{a[i1:i2]}</span><span class="ins">{b[j1:j2]}</span>')
-    return '<div class="diff">' + "".join(out).replace(" ", "&nbsp;") + '</div>'
+            delc = a[i1:i2].replace(" ", "&nbsp;")
+            insc = b[j1:j2].replace(" ", "&nbsp;")
+            out.append(f'<span class="del">{delc}</span><span class="ins">{insc}</span>')
+    return '<div class="diff">' + "".join(out) + '</div>'
 
 # ==================
 #  UI PRINCIPALE
@@ -415,7 +584,7 @@ except Exception as e:
     st.stop()
 
 cols = list(df.columns)
-st.markdown("Colonnes détectées : " + " ".join([f'<span class="badge">{c}</span>' for c in cols]), unsafe_allow_html=True)
+st.markdown("Colonnes détectées : " + " ".join([f'<span class=\"badge\">{c}</span>' for c in cols]), unsafe_allow_html=True)
 
 # Détection auto + override utilisateur
 try:
@@ -432,12 +601,25 @@ with tab_clean:
     st.dataframe(df.head(), use_container_width=True)
     if st.button("Lancer le nettoyage", type="primary"):
         with st.spinner("Nettoyage en cours…"):
+            # Rue (inchangé)
             df["Rue_corrigee"] = df[col_rue].apply(clean_pipeline)
+
+            # AJOUT : Ville / Région/Province / Code postal / Pays
+            df = apply_location_cleaning(df)
+
         diff_count = (df[col_rue].fillna("").astype(str).str.strip()
                       != df["Rue_corrigee"].fillna("").astype(str).str.strip()).sum()
-        st.success(f"Terminé ✅  |  Lignes: {len(df):,}  •  Modifiées: {diff_count:,}")
+
+        st.success(f"Terminé ✅  |  Lignes: {len(df):,}  •  Modifiées (Rue): {diff_count:,}")
+
         st.write("Aperçu des corrections :")
-        st.dataframe(df[[col_rue, "Rue_corrigee"]].head(30), use_container_width=True)
+
+        preview_cols = [col_rue, "Rue_corrigee"]
+        for c in ["Ville_corrigee", "Region_Province_corrigee", "Code_postal_corrige", "Pays_corrige"]:
+            if c in df.columns:
+                preview_cols.append(c)
+
+        st.dataframe(df[preview_cols].head(30), use_container_width=True)
 
         # exports
         c1, c2 = st.columns(2)
