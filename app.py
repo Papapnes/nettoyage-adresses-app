@@ -1,3 +1,4 @@
+# ...existing code...
 # Script application final
 # NOTE: AUCUNE modification sur le pipeline "Rue"
 # API utilisée UNIQUEMENT pour la colonne "Ville"
@@ -7,7 +8,6 @@ import json
 import unicodedata
 import urllib.request
 import urllib.parse
-
 import pandas as pd
 import streamlit as st
 from io import BytesIO, StringIO
@@ -118,14 +118,37 @@ def _clean_basic_simple(x):
     s = re.sub(r"\s+", " ", s).strip()
     return s if s else None
 
+def _correct_ville_accents(name: str) -> str:
+    if not name:
+        return None
+    nk = name.strip().lower()
+    for k, v in ACCENT_CORRECTIONS.items():
+        if k.strip().lower() == nk:
+            return v
+    # fallback: try to restore common accents by unicode normalization heuristics
+    # ex: "Montreal" -> "Montréal"
+    # try to match known tokens
+    parts = name.split()
+    corrected = []
+    for p in parts:
+        p_clean = p.strip()
+        p_noacc = unicodedata.normalize("NFD", p_clean).encode("ascii", "ignore").decode("ascii")
+        if p_noacc.lower() in {k.strip().lower() for k in ACCENT_CORRECTIONS.keys()}:
+            # find mapping
+            for k, v in ACCENT_CORRECTIONS.items():
+                if k.strip().lower() == p_noacc.lower():
+                    corrected.append(v)
+                    break
+        else:
+            corrected.append(p_clean)
+    return " ".join(corrected) if corrected else name
+
 @st.cache_data(show_spinner=False)
 def fetch_ville_officielle_api(ville_query: str):
     """
     API Données Québec — retourne le nom officiel (champ 'title') si trouvé, sinon None.
     """
     try:
-        # On garde le style que tu as fourni : q=title:xxx
-        # Pour les espaces, on ajoute des guillemets
         q = f'title:"{ville_query}"' if " " in ville_query else f"title:{ville_query}"
         params = {
             "resource_id": VILLE_RESOURCE_ID,
@@ -134,7 +157,8 @@ def fetch_ville_officielle_api(ville_query: str):
         }
         url = "https://www.donneesquebec.ca/recherche/api/3/action/datastore_search?" + urllib.parse.urlencode(params)
 
-        with urllib.request.urlopen(url, timeout=6) as response:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible)"})
+        with urllib.request.urlopen(req, timeout=6) as response:
             data = json.loads(response.read().decode("utf-8"))
 
         records = data.get("result", {}).get("records", [])
@@ -151,7 +175,9 @@ def clean_ville_api(v):
         return None
     v_title = v.title()
     official = fetch_ville_officielle_api(v_title)
-    return official if official else v_title
+    if official:
+        return official
+    return _correct_ville_accents(v_title)
 
 PROVINCE_TO_CODE = {
     # QC
@@ -245,7 +271,7 @@ def apply_location_cleaning(df: pd.DataFrame) -> pd.DataFrame:
                 continue
             u_title = u_clean.title()
             official = fetch_ville_officielle_api(u_title)
-            mapping[u] = official if official else u_title
+            mapping[u] = official if official else _correct_ville_accents(u_title)
 
         df["Ville_corrigee"] = df["Ville"].map(mapping)
 
@@ -347,24 +373,28 @@ def capitalize_letter_after_number(address):
 def replace_cardinal_directions(address):
     if pd.isna(address): return address
     for pat, rep in DIRECTION_MAPPING.items():
-        address = re.sub(pat, rep, address)
+        address = re.sub(pat, rep, address, flags=re.IGNORECASE)
     address = re.sub(r'\b([NSEOW])\.\b', r'\1', address)
     return address
 
 def replace_st_with_saint_or_sainte(address):
     if pd.isna(address): return address
-    # Gérer St/Ste avec tiret, point ou espace : St-Jean, St Jean, St. Jean, Ste-Foy...
+    # capture St/Ste + separator + name, convert to Saint/Sainte accordingly
     def repl(m):
-        token = m.group(2)
-        return ("Sainte-" if token.title() in NOMS_FEMININS else "Saint-") + token
-    address = re.sub(r'\b(St|Ste|St\.|Ste\.)[\s\-\.]+([A-Za-zÉéÈèÀàÙù\'’\-]+)', repl, address, flags=re.IGNORECASE)
+        prefix = m.group(1)
+        name = m.group(2)
+        name_key = name.title()
+        return ("Sainte-" if name_key in NOMS_FEMININS or prefix.lower().startswith("ste") else "Saint-") + name
+    address = re.sub(r'\b(Ste|St|Ste\.|St\.)[\s\-\._]+([A-Za-zÉéÈèÀàÙù\'’\-]+)', repl, address, flags=re.IGNORECASE)
     return address
 
 def expand_abbreviations(address):
     if pd.isna(address): return address
     s = address
-    for abbr, full in VOIE_MAPPING_FULL.items():
-        s = re.sub(r'\b' + re.escape(abbr) + r'\b', full, s, flags=re.IGNORECASE)
+    # longer keys first to avoid partial replacements
+    for abbr in sorted(VOIE_MAPPING_FULL.keys(), key=lambda x: -len(x)):
+        full = VOIE_MAPPING_FULL[abbr]
+        s = re.sub(r'(?<!\w)'+re.escape(abbr)+r'(?!\w)', full, s, flags=re.IGNORECASE)
     s = re.sub(r'\bCote St Luc Route\b', 'Chemin Cote St Luc', s, flags=re.IGNORECASE)
     return s
 
@@ -372,7 +402,7 @@ def correct_accents(address):
     if pd.isna(address): return address
     s = address
     for typo, corr in ACCENT_CORRECTIONS.items():
-        s = re.sub(r'\b' + re.escape(typo) + r'\b', corr, s)
+        s = re.sub(r'\b' + re.escape(typo) + r'\b', corr, s, flags=re.IGNORECASE)
     return s
 
 def correct_compounds(address):
@@ -390,7 +420,7 @@ def normalize_hyphens_apostrophes(address):
 
 def standardize_ordinal_suffix(address):
     if pd.isna(address): return address
-    # Simplifier la gestion des suffixes ordinaux courants (1er, 1re, 1ère, 2e, 2ème, etc.)
+    # Simplifier suffixes ordinaux courants
     address = re.sub(r'\b1(?:er|re|ère|e|ème|eme)\b', '1RE', address, flags=re.IGNORECASE)
     address = re.sub(r'\b([2-9]|[1-9][0-9])(?:e|ème|eme)\b', lambda m: f"{m.group(1)}E", address, flags=re.IGNORECASE)
     return address
