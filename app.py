@@ -1,6 +1,11 @@
 # Script application final (SANS API)
-# ✅ MISE À JOUR: nouveaux patterns ajoutés (E/O/N/S + "Ap" + pattern #240 ... #240)
-# ✅ AUCUNE MODIF sur la logique globale : seulement ajouts ciblés
+# ✅ MISE À JOUR (itérations):
+# 1) Directions Est/Ouest/Nord/Sud -> E/O/N/S (case-insensitive)
+# 2) "Ap / ap" reconnu comme terme d’unité
+# 3) Pattern "#240 ... #240" -> "240-2354 Avenue ..."
+# 4) Pattern Highway: "2306 Hwy 303" -> "303-2306 Highway"
+# 5) Fusion civique: "10 920 ..." -> "10920 ..."
+# 6) Supprime duplication unité finale: "820-105 ... 820" -> "820-105 ..."
 
 import re
 import pandas as pd
@@ -51,6 +56,7 @@ st.markdown('<p class="sub">Importez votre fichier CSV/XLSX, corrigez les adress
 # ============================
 def read_any(uploaded_file) -> pd.DataFrame:
     name = uploaded_file.name.lower()
+
     # Excel
     if name.endswith((".xlsx", ".xls")):
         uploaded_file.seek(0)
@@ -98,10 +104,13 @@ def read_any(uploaded_file) -> pd.DataFrame:
     sep = ';' if text.count(';') > text.count(',') else ','
     return pd.read_csv(StringIO(text), sep=sep, engine='python')
 
+
+
+
 # ======================
 #  PIPELINE RENFORCÉ
 # ======================
-WORDS_TO_REMOVE = ["Canada","QC","Québec","Montréal","Qc","Quebec","Montreal"]
+WORDS_TO_REMOVE = ["Canada", "QC", "Québec", "Montréal", "Qc", "Quebec", "Montreal"]
 POSTAL_CODE_RE = r'\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b'
 
 NOMS_FEMININS = ["Anne","Catherine","Claire","Élisabeth","Geneviève","Hélène","Jacqueline","Jeanne",
@@ -114,7 +123,7 @@ VOIE_MAPPING_FULL = {
     # français
     "Av": "Avenue", "Ave": "Avenue", "Ave.": "Avenue", "Av.": "Avenue", "Avé": "Avenue",
     "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard",
-    "Bl": "Boulevard","bl ": "Boulevard",
+    "Bl": "Boulevard", "bl ": "Boulevard",
     "Bd": "Boulevard", "Bd.": "Boulevard", "Boul.": "Boulevard",
     "Ch": "Chemin", "Ch.": "Chemin", "Che": "Chemin", "Che.": "Chemin",
     "Cte": "Côte", "Prom": "Promenade", "Terr": "Terrasse", "Pl": "Place", "Rg": "Rang",
@@ -132,12 +141,15 @@ VOIE_MAPPING_FULL = {
 }
 
 DIRECTION_MAPPING = {
-    r'\bEst\b':'E', r'\bOuest\b':'O', r'\bNord\b':'N', r'\bSud\b':'S',
-    r'\bEast\b':'E', r'\bWest\b':'W', r'\bNorth\b':'N', r'\bSouth\b':'S'
+    r'\bEst\b': 'E', r'\bOuest\b': 'O', r'\bNord\b': 'N', r'\bSud\b': 'S',
+    r'\bEast\b': 'E', r'\bWest\b': 'W', r'\bNorth\b': 'N', r'\bSouth\b': 'S'
 }
 
 ACCENT_CORRECTIONS = {
-    "Ecole":"École","Erables":"Érables","Montreal":"Montréal","Trois Rivieres":"Trois-Rivières"
+    "Ecole": "École",
+    "Erables": "Érables",
+    "Montreal": "Montréal",
+    "Trois Rivieres": "Trois-Rivières",
 }
 
 COMPOUND_CORRECTIONS = {
@@ -150,9 +162,9 @@ COMPOUND_CORRECTIONS = {
 }
 
 UNIT_TERMS = [
-    "App","Apt","Appt","Appartement","Unit","Unité","Logement","Suite","Apartment",
-    "Ap","ap",  # ✅ AJOUT
-    "app","apt","appt","unit","suite","no","n0","#"
+    "App", "Apt", "Appt", "Appartement", "Unit", "Unité", "Logement", "Suite", "Apartment",
+    "Ap", "ap",  # ✅ AJOUT
+    "app", "apt", "appt", "unit", "suite", "no", "n0", "#"
 ]
 
 KEEP_UPPER = {"N","S","E","O","NE","NO","SE","SO","W","NW","SW",
@@ -162,40 +174,61 @@ STREET_TYPES_RE = r'(Rue|Avenue|Boulevard|Chemin|Place|Terrasse|Voie|Allée|Prom
 
 # -- Étapes du pipeline (fonctions pures) --
 def clean_text(text):
-    if pd.isna(text): return None
+    if pd.isna(text):
+        return None
     text = re.sub(r'[.,;:/#&@"*|]', ' ', str(text))
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
+def merge_split_civic_number(address):
+    """
+    Cas: "10 920 Waverly" -> "10920 Waverly"
+         "10 940 ave ..." -> "10940 ave ..."
+    """
+    if pd.isna(address):
+        return address
+    s = str(address).strip()
+    m = re.match(r'^(\d{1,2})\s+(\d{3,4})\b(.*)$', s)
+    if not m:
+        return address
+    a, b, rest = m.group(1), m.group(2), m.group(3)
+    merged = f"{a}{b}"
+    return (merged + rest).strip()
+
 def clean_address(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     for w in WORDS_TO_REMOVE:
-        address = re.sub(r'\b' + re.escape(w) + r'\b','',address, flags=re.IGNORECASE).strip()
-    address = re.sub(POSTAL_CODE_RE,'',address).strip()
-    address = re.sub(r'\s+',' ',address).strip()
+        address = re.sub(r'\b' + re.escape(w) + r'\b', '', address, flags=re.IGNORECASE).strip()
+    address = re.sub(POSTAL_CODE_RE, '', address).strip()
+    address = re.sub(r'\s+', ' ', address).strip()
     return address
 
 def remove_inline_unit_terms(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     pattern = r'\b(?:' + '|'.join(map(re.escape, UNIT_TERMS)) + r')\.?\b'
-    address = re.sub(pattern,'',address, flags=re.IGNORECASE)
-    address = re.sub(r'\s+',' ',address).strip()
+    address = re.sub(pattern, '', address, flags=re.IGNORECASE)
+    address = re.sub(r'\s+', ' ', address).strip()
     return address
 
 def capitalize_letter_after_number(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     return re.sub(r'(\d+)([a-z])\b', lambda m: f"{m.group(1)}{m.group(2).upper()}", address)
 
 def replace_cardinal_directions(address):
-    # ✅ MISE À JOUR: flags=re.IGNORECASE pour capter "est" / "ouest" etc.
-    if pd.isna(address): return address
+    # ✅ case-insensitive pour capter "est" / "ouest" etc.
+    if pd.isna(address):
+        return address
     for pat, rep in DIRECTION_MAPPING.items():
         address = re.sub(pat, rep, address, flags=re.IGNORECASE)
     address = re.sub(r'\b([NSEOW])\.\b', r'\1', address)
     return address
 
 def replace_st_with_saint_or_sainte(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     m = re.search(r'\bSt-([A-Za-zÉéÈèÀàÙù]+)', address)
     if m:
         following = m.group(1)
@@ -203,35 +236,55 @@ def replace_st_with_saint_or_sainte(address):
     return address
 
 def expand_abbreviations(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     s = address
     for abbr, full in VOIE_MAPPING_FULL.items():
         s = re.sub(r'\b' + re.escape(abbr) + r'\b', full, s, flags=re.IGNORECASE)
     s = re.sub(r'\bCote St Luc Route\b', 'Chemin Cote St Luc', s, flags=re.IGNORECASE)
     return s
 
+def fix_highway_unit_pattern(address):
+    """
+    Cas: "2306 Hwy 303" ou "2306-Highway 303" -> "303-2306 Highway"
+    """
+    if pd.isna(address):
+        return address
+    s = str(address).strip()
+    m = re.match(r'^(\d+)\s*-\s*(hwy|highway)\s+(\d+)\b$', s, flags=re.IGNORECASE) \
+        or re.match(r'^(\d+)\s+(hwy|highway)\s+(\d+)\b$', s, flags=re.IGNORECASE)
+    if not m:
+        return address
+    civic = m.group(1)
+    unit = m.group(3)
+    return f"{unit}-{civic} Highway"
+
 def correct_accents(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     s = address
     for typo, corr in ACCENT_CORRECTIONS.items():
         s = re.sub(r'\b' + re.escape(typo) + r'\b', corr, s)
     return s
 
 def correct_compounds(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     s = address
     for pat, corr in COMPOUND_CORRECTIONS.items():
         s = re.sub(pat, corr, s, flags=re.IGNORECASE)
     return s
 
 def normalize_hyphens_apostrophes(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     address = re.sub(r'\s*-\s*', '-', address)
     address = re.sub(r"'", "’", address)
     return address
 
 def standardize_ordinal_suffix(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     address = re.sub(r'\b1([èeé]re|er|re)\b', '1RE', address, flags=re.IGNORECASE)
     for n in range(2, 10):
         address = re.sub(rf'\b{n}([ìi]eme|ieme|ième|[èeé]me|e)\b', f'{n}E', address, flags=re.IGNORECASE)
@@ -239,7 +292,8 @@ def standardize_ordinal_suffix(address):
     return address
 
 def move_trailing_apt_to_front(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     m = re.search(r'(.+?)\s+(\d+)$', address)
     if m:
         street_part, apt_number = m.group(1), m.group(2)
@@ -249,7 +303,8 @@ def move_trailing_apt_to_front(address):
     return address
 
 def remove_final_duplicate_number(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     m = re.match(r'^(\d+)[\-\s](\d+)\s+(.*?)(?:\s+(\d+))$', address)
     if m:
         first_num, second_num, street, last_num = m.group(1), m.group(2), m.group(3).strip(), m.group(4)
@@ -259,9 +314,8 @@ def remove_final_duplicate_number(address):
 
 def fix_unit_then_civic_with_duplicate_unit(address):
     """
-    ✅ Nouveau modèle:
-    "#240, 2354 Ave Letourneux | #240" -> "240-2354 Avenue Letourneux"
-    Après clean_text => "240 2354 Ave Letourneux 240"
+    Cas: "240 2354 Ave Letourneux 240" -> "240-2354 Avenue Letourneux"
+    Garde-fou: applique seulement si on voit un hint de voie dans 'rest'
     """
     if pd.isna(address):
         return address
@@ -269,18 +323,40 @@ def fix_unit_then_civic_with_duplicate_unit(address):
     m = re.match(r'^(\d+)\s+(\d+)\s+(.+?)(?:\s+\1)?$', s)
     if not m:
         return address
+
     unit, civic, rest = m.group(1), m.group(2), m.group(3).strip()
-    if not (unit.isdigit() and civic.isdigit()):
+
+    has_way_hint = bool(re.search(
+        r'\b(ave|avenue|rue|street|st|boul|boulevard|chemin|ch|route|rt|hwy|highway|dr|drive|ln|lane|pl|place)\b',
+        rest, flags=re.IGNORECASE
+    ))
+    if not has_way_hint:
         return address
+
+    return f"{unit}-{civic} {rest}".strip()
+
+def remove_trailing_duplicate_unit_after_move(address):
+    """
+    Cas: "820-105 Adelaide Street W 820" -> "820-105 Adelaide Street W"
+    """
+    if pd.isna(address):
+        return address
+    s = str(address).strip()
+    m = re.match(r'^(\d+)-(\d+)\s+(.+?)\s+\1$', s)
+    if not m:
+        return address
+    unit, civic, rest = m.group(1), m.group(2), m.group(3).strip()
     return f"{unit}-{civic} {rest}".strip()
 
 def remove_unit_terms_tail(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     tail_pat = r'\b(?:' + '|'.join(map(re.escape, UNIT_TERMS)) + r')\.?\s*\d*\s*$'
     return re.sub(tail_pat, '', address, flags=re.IGNORECASE).strip()
 
 def ensure_street_type_if_missing(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     has_type = re.search(r'\b' + STREET_TYPES_RE + r'\b', address, flags=re.IGNORECASE)
     if has_type:
         return address
@@ -292,35 +368,51 @@ def ensure_street_type_if_missing(address):
     return address
 
 def remove_duplicate_words_numbers(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     words = address.split()
     seen, out = set(), []
     for w in words:
         lw = w.lower()
         if lw not in seen:
-            out.append(w); seen.add(lw)
+            out.append(w)
+            seen.add(lw)
     return " ".join(out)
 
 def title_preserve_tokens(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
     t = address.title()
     t = re.sub(r'\b(\d+R?E)\b', lambda m: m.group(1).upper(), t)
+
     def fix_token(m):
-        tok = m.group(0); up = tok.upper()
+        tok = m.group(0)
+        up = tok.upper()
         return up if up in KEEP_UPPER else tok
+
     t = re.sub(r'\b([A-Za-z]{1,3})\b', fix_token, t)
     return t
 
 # --- Pipeline simple (prod) ---
 def clean_pipeline(address):
-    if pd.isna(address): return address
+    if pd.isna(address):
+        return address
+
     address = clean_text(address)
+
+    # ✅ AJOUT: 10 920 -> 10920 (à faire très tôt)
+    address = merge_split_civic_number(address)
+
     address = clean_address(address)
     address = remove_inline_unit_terms(address)
     address = capitalize_letter_after_number(address)
     address = replace_cardinal_directions(address)
     address = replace_st_with_saint_or_sainte(address)
     address = expand_abbreviations(address)
+
+    # ✅ AJOUT: 2306 Hwy 303 -> 303-2306 Highway
+    address = fix_highway_unit_pattern(address)
+
     address = correct_accents(address)
     address = correct_compounds(address)
     address = normalize_hyphens_apostrophes(address)
@@ -331,6 +423,10 @@ def clean_pipeline(address):
     address = fix_unit_then_civic_with_duplicate_unit(address)
 
     address = move_trailing_apt_to_front(address)
+
+    # ✅ AJOUT: 820-105 ... W 820 -> 820-105 ... W
+    address = remove_trailing_duplicate_unit_after_move(address)
+
     address = remove_unit_terms_tail(address)
     address = ensure_street_type_if_missing(address)
     address = remove_duplicate_words_numbers(address)
@@ -340,23 +436,26 @@ def clean_pipeline(address):
 # --- Pipeline avec stats (diagnostic par règle) ---
 RULES = [
     ("01_clean_text", clean_text),
-    ("02_clean_geo_postal", clean_address),
-    ("03_remove_unit_terms", remove_inline_unit_terms),
-    ("04_cap_after_number", capitalize_letter_after_number),
-    ("05_cardinals", replace_cardinal_directions),
-    ("06_Stdash_to_Saint", replace_st_with_saint_or_sainte),
-    ("07_expand_abbrev", expand_abbreviations),
-    ("08_fix_accents", correct_accents),
-    ("09_fix_compounds", correct_compounds),
-    ("10_norm_hyphen_apos", normalize_hyphens_apostrophes),
-    ("11_ordinals", standardize_ordinal_suffix),
-    ("12_drop_final_dupnum", remove_final_duplicate_number),
-    ("13_fix_unit_civic_dupunit", fix_unit_then_civic_with_duplicate_unit),  # ✅ AJOUT
-    ("14_move_trailing_number", move_trailing_apt_to_front),
-    ("15_remove_unit_tail", remove_unit_terms_tail),
-    ("16_insert_default_Rue", ensure_street_type_if_missing),
-    ("17_dedupe_tokens", remove_duplicate_words_numbers),
-    ("18_title_preserve", title_preserve_tokens),
+    ("02_merge_split_civic", merge_split_civic_number),
+    ("03_clean_geo_postal", clean_address),
+    ("04_remove_unit_terms", remove_inline_unit_terms),
+    ("05_cap_after_number", capitalize_letter_after_number),
+    ("06_cardinals", replace_cardinal_directions),
+    ("07_Stdash_to_Saint", replace_st_with_saint_or_sainte),
+    ("08_expand_abbrev", expand_abbreviations),
+    ("09_fix_highway_unit", fix_highway_unit_pattern),
+    ("10_fix_accents", correct_accents),
+    ("11_fix_compounds", correct_compounds),
+    ("12_norm_hyphen_apos", normalize_hyphens_apostrophes),
+    ("13_ordinals", standardize_ordinal_suffix),
+    ("14_drop_final_dupnum", remove_final_duplicate_number),
+    ("15_fix_unit_civic_dupunit", fix_unit_then_civic_with_duplicate_unit),
+    ("16_move_trailing_number", move_trailing_apt_to_front),
+    ("17_drop_trailing_dupunit", remove_trailing_duplicate_unit_after_move),
+    ("18_remove_unit_tail", remove_unit_terms_tail),
+    ("19_insert_default_Rue", ensure_street_type_if_missing),
+    ("20_dedupe_tokens", remove_duplicate_words_numbers),
+    ("21_title_preserve", title_preserve_tokens),
 ]
 
 def run_pipeline_with_stats(s: str):
@@ -421,7 +520,7 @@ with st.expander("📎 Conseils", expanded=False):
     st.markdown("""
     - Le fichier doit contenir **au moins une colonne d’adresse** (ex. `Rue`, `Address`, `Adresse`).
     - La sortie ajoute une colonne **`Rue_corrigee`**.
-    - Aucune autre colonne n’est supprimée (ex. `donorbox receipt`, `constituant id`).
+    - Aucune autre colonne n’est supprimée.
     """)
 
 if not uploaded:
@@ -451,12 +550,14 @@ tab_clean, tab_compare, tab_stats = st.tabs(["✨ Nettoyage", "🪄 Comparaison"
 with tab_clean:
     st.write("Aperçu initial :")
     st.dataframe(df.head(), use_container_width=True)
+
     if st.button("Lancer le nettoyage", type="primary"):
         with st.spinner("Nettoyage en cours…"):
             df["Rue_corrigee"] = df[col_rue].apply(clean_pipeline)
 
         diff_count = (df[col_rue].fillna("").astype(str).str.strip()
                       != df["Rue_corrigee"].fillna("").astype(str).str.strip()).sum()
+
         st.success(f"Terminé ✅  |  Lignes: {len(df):,}  •  Modifiées: {diff_count:,}")
         st.write("Aperçu des corrections :")
         st.dataframe(df[[col_rue, "Rue_corrigee"]].head(30), use_container_width=True)
@@ -464,18 +565,26 @@ with tab_clean:
         c1, c2 = st.columns(2)
         with c1:
             csv_bytes = df.to_csv(index=False, encoding="utf-8-sig")
-            st.download_button("⬇️ Télécharger CSV corrigé", data=csv_bytes,
-                               file_name="adresses_corrigees.csv", mime="text/csv")
+            st.download_button(
+                "⬇️ Télécharger CSV corrigé",
+                data=csv_bytes,
+                file_name="adresses_corrigees.csv",
+                mime="text/csv"
+            )
         with c2:
             buf = BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                 df.to_excel(writer, index=False, sheet_name="Adresses")
-            st.download_button("⬇️ Télécharger Excel corrigé", data=buf.getvalue(),
-                               file_name="adresses_corrigees.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "⬇️ Télécharger Excel corrigé",
+                data=buf.getvalue(),
+                file_name="adresses_corrigees.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 with tab_compare:
     st.markdown("Compare **avant / après** avec surlignage : <span class='ins'>ajouts</span>, <span class='del'>suppressions</span>", unsafe_allow_html=True)
+
     if "Rue_corrigee" not in df.columns:
         st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
     else:
@@ -527,6 +636,7 @@ with tab_compare:
 
 with tab_stats:
     st.markdown("Comptage **par règle du pipeline** (diagnostic exhaustif).")
+
     if "Rue_corrigee" not in df.columns:
         st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
     else:
@@ -541,7 +651,10 @@ with tab_stats:
         c = Counter()
         for L in applied_list:
             c.update(L)
-        stats_df = pd.DataFrame({"regle": list(c.keys()), "comptage": list(c.values())}).sort_values("comptage", ascending=False)
+
+        stats_df = pd.DataFrame(
+            {"regle": list(c.keys()), "comptage": list(c.values())}
+        ).sort_values("comptage", ascending=False)
 
         mod_count = (df[col_rue].fillna("").astype(str).str.strip()
                      != pd.Series(finals).fillna("").astype(str).str.strip()).sum()
