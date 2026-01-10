@@ -16,7 +16,7 @@ from difflib import SequenceMatcher
 
 # ---- Page & layout ----
 st.set_page_config(
-    page_title="Abdel_appy_Clean_SPCA",
+    page_title="Abdel_appy_Clean_SPCA_V2",
     page_icon="🧹",
     layout="centered",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
