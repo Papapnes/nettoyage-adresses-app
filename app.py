@@ -1,14 +1,6 @@
-# Script application final (pipeline complet)
-# - Pipeline Rue: INCHANGÉ (fonctions)
-# - UI: multiselect (liste déroulante avec "cases") pour choisir 1+ colonnes Rue/Adresse à corriger
-# - Ajout: corrections Ville (API + règles) + Province + Code postal + Pays, activables via checkboxes
+#Script applictio final sans API
 
 import re
-import json
-import unicodedata
-import urllib.request
-import urllib.parse
-
 import pandas as pd
 import streamlit as st
 from io import BytesIO, StringIO
@@ -22,6 +14,7 @@ st.set_page_config(
     layout="centered",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
+
 
 # ---- CSS minimal ----
 st.markdown("""
@@ -46,7 +39,7 @@ footer, #MainMenu {visibility:hidden;}
 st.markdown("""
 <h1>
 🧹 <span class="app-title">Abdel_Data_Analyste_</span>
-<span style="font-size:1.4em; color:#ae0f27; font-weight:900;">SPCA2</span>
+<span style="font-size:1.4em; color:#ae0f27; font-weight:900;">SPCA</span>
 <span class="app-title"></span>
 </h1>
 """, unsafe_allow_html=True)
@@ -104,165 +97,8 @@ def read_any(uploaded_file) -> pd.DataFrame:
     sep = ';' if text.count(';') > text.count(',') else ','
     return pd.read_csv(StringIO(text), sep=sep, engine='python')
 
-# ============================
-#  HELPERS COLONNES
-# ============================
-def normalize_colname(c: str) -> str:
-    return re.sub(r'[^a-z0-9]', '', str(c).strip().lower())
-
-# =========================================================
-#  AJOUT — PIPELINE (Ville / Province / Code postal / Pays)
-# =========================================================
-VILLE_RESOURCE_ID = "19385b4e-5503-4330-9e59-f998f5918363"
-
-def _clean_basic_simple(x):
-    if pd.isna(x):
-        return None
-    s = str(x).strip()
-    s = re.sub(r"\s+", " ", s).strip()
-    return s if s else None
-
-@st.cache_data(show_spinner=False)
-def fetch_ville_officielle_api(ville_query: str):
-    try:
-        q = f'title:"{ville_query}"' if " " in ville_query else f"title:{ville_query}"
-        params = {"resource_id": VILLE_RESOURCE_ID, "limit": 1, "q": q}
-        url = "https://www.donneesquebec.ca/recherche/api/3/action/datastore_search?" + urllib.parse.urlencode(params)
-        with urllib.request.urlopen(url, timeout=6) as response:
-            data = json.loads(response.read().decode("utf-8"))
-        records = data.get("result", {}).get("records", [])
-        if records:
-            return records[0].get("title")
-    except Exception:
-        return None
-    return None
-
-CITY_EXACT_CORRECTIONS = {
-    "Chateauguay": "Châteauguay",
-    "Dollard Des Ormeaux": "Dollard-Des-Ormeaux",
-    "Quebec": "Québec",
-    "Rosemere": "Rosemère",
-    "La Salle": "Lasalle",
-    "Montreal-Ouest": "Montréal-Ouest",
-    "Cote Saint-Luc": "Côte Saint-Luc",
-    "Saint-Leonard": "Saint-Léonard",
-}
-
-def _remove_city_punct(s: str) -> str:
-    return re.sub(r"[,;.:]", " ", s)
-
-def _normalize_spaces_hyphens(s: str) -> str:
-    s = re.sub(r"\s+", " ", s).strip()
-    s = re.sub(r"\s*-\s*", "-", s)
-    return s
-
-def _expand_st_ste_tokens(s: str) -> str:
-    s = re.sub(r"\bSt\.?\b", "Saint", s, flags=re.IGNORECASE)
-    s = re.sub(r"\bSte\.?\b", "Sainte", s, flags=re.IGNORECASE)
-    return s
-
-def clean_ville_api(v):
-    v = _clean_basic_simple(v)
-    if not v:
-        return None
-    s = str(v).strip()
-    s = _remove_city_punct(s)
-    s = _normalize_spaces_hyphens(s)
-    s = s.title()
-    s = _expand_st_ste_tokens(s)
-    s = _normalize_spaces_hyphens(s)
-    if s in CITY_EXACT_CORRECTIONS:
-        s = CITY_EXACT_CORRECTIONS[s]
-    official = fetch_ville_officielle_api(s)
-    return official if official else s
-
-PROVINCE_TO_CODE = {
-    "quebec": "QC", "québec": "QC", "qc": "QC",
-    "ontario": "ON", "on": "ON",
-    "british columbia": "BC", "colombie-britannique": "BC", "colombie britannique": "BC", "bc": "BC",
-    "alberta": "AB", "ab": "AB",
-    "manitoba": "MB", "mb": "MB",
-    "saskatchewan": "SK", "sk": "SK",
-    "nova scotia": "NS", "nouvelle-écosse": "NS", "nouvelle ecosse": "NS", "ns": "NS",
-    "new brunswick": "NB", "nouveau-brunswick": "NB", "nb": "NB",
-    "newfoundland and labrador": "NL", "terre-neuve-et-labrador": "NL", "terre neuve et labrador": "NL", "nl": "NL", "nf": "NL",
-    "prince edward island": "PE", "île-du-prince-édouard": "PE", "ile-du-prince-edouard": "PE", "pei": "PE", "pe": "PE",
-    "yukon": "YT", "yt": "YT",
-    "northwest territories": "NT", "territoires du nord-ouest": "NT", "territoires du nord ouest": "NT", "nt": "NT", "nwt": "NT",
-    "nunavut": "NU", "nu": "NU",
-}
-
-def _strip_accents(s: str) -> str:
-    s = unicodedata.normalize("NFD", s)
-    return "".join(c for c in s if unicodedata.category(c) != "Mn")
-
-def clean_province_code(p):
-    p = _clean_basic_simple(p)
-    if not p:
-        return None
-    raw = p.lower().strip()
-    raw = re.sub(r"[.,;/\-]", " ", raw)
-    raw = re.sub(r"\s+", " ", raw).strip()
-
-    raw_noacc = _strip_accents(raw)
-    raw_compact = raw.replace(" ", "")
-    raw_noacc_compact = raw_noacc.replace(" ", "")
-
-    for key in (raw, raw_noacc, raw_compact, raw_noacc_compact):
-        if key in PROVINCE_TO_CODE:
-            return PROVINCE_TO_CODE[key]
-
-    if len(raw_compact) == 2 and raw_compact.isalpha():
-        return raw_compact.upper()
-
-    return None
-
-def clean_code_postal(pc):
-    pc = _clean_basic_simple(pc)
-    if not pc:
-        return None
-    s = str(pc).strip().upper()
-    s = re.sub(r"\s+", "", s)
-    s = re.sub(r"[^A-Z0-9]", "", s)
-    if len(s) >= 6:
-        return s[:3] + " " + s[3:6]
-    return s
-
-def clean_pays(country):
-    country = _clean_basic_simple(country)
-    if not country:
-        return None
-    return str(country).strip().title()
-
-def apply_location_cleaning(
-    df: pd.DataFrame,
-    do_ville: bool, ville_col: str,
-    do_prov: bool, prov_col: str,
-    do_postal: bool, postal_col: str,
-    do_pays: bool, pays_col: str
-) -> pd.DataFrame:
-
-    if do_ville and ville_col in df.columns:
-        uniques = df[ville_col].dropna().astype(str).unique().tolist()
-        mapping = {}
-        for u in uniques:
-            u_clean = _clean_basic_simple(u)
-            mapping[u] = clean_ville_api(u_clean) if u_clean else None
-        df["Ville_corrigee"] = df[ville_col].map(mapping)
-
-    if do_prov and prov_col in df.columns:
-        df["Region_Province_corrigee"] = df[prov_col].apply(clean_province_code)
-
-    if do_postal and postal_col in df.columns:
-        df["Code_postal_corrige"] = df[postal_col].apply(clean_code_postal)
-
-    if do_pays and pays_col in df.columns:
-        df["Pays_corrige"] = df[pays_col].apply(clean_pays)
-
-    return df
-
 # ======================
-#  PIPELINE RENFORCÉ (Rue) — INCHANGÉ
+#  PIPELINE RENFORCÉ
 # ======================
 WORDS_TO_REMOVE = ["Canada","QC","Québec","Montréal","Qc","Quebec","Montreal"]
 POSTAL_CODE_RE = r'\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b'
@@ -274,12 +110,14 @@ NOMS_FEMININS = ["Anne","Catherine","Claire","Élisabeth","Geneviève","Hélène
                  "Rosalie","Simone","Suzanne","Valérie"]
 
 VOIE_MAPPING_FULL = {
+    # français
     "Av": "Avenue", "Ave": "Avenue", "Ave.": "Avenue", "Av.": "Avenue", "Avé": "Avenue",
     "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard","bl ": "Boulevard",
     "Ch": "Chemin", "Cte": "Côte", "Prom": "Promenade", "Terr": "Terrasse", "Pl": "Place", "Rg": "Rang",
     "Cr": "Crois", "Crois": "Croissant", "Cres": "Croissant", "Cres.": "Croissant",
     "Rt": "Route", "Rd": "Route", "Rd.": "Route",
     "V": "Voie",
+    # anglais génériques
     "St": "Saint", "St.": "Saint",
     "Dr": "Drive", "Dr.": "Drive",
     "Ln": "Lane", "Ln.": "Lane",
@@ -316,6 +154,7 @@ KEEP_UPPER = {"N","S","E","O","NE","NO","SE","SO","W","NW","SW",
 
 STREET_TYPES_RE = r'(Rue|Avenue|Boulevard|Chemin|Place|Terrasse|Voie|Allée|Promenade|Côte|Rang|Route|Croissant|Crois|Street|Road|Drive|Lane|Court|Highway|Way|Trail|Esplanade)'
 
+# -- Étapes du pipeline (fonctions pures) --
 def clean_text(text):
     if pd.isna(text): return None
     text = re.sub(r'[.,;:/#&@"*|]', ' ', str(text))
@@ -448,6 +287,7 @@ def title_preserve_tokens(address):
     t = re.sub(r'\b([A-Za-z]{1,3})\b', fix_token, t)
     return t
 
+# --- Pipeline simple (prod) ---
 def clean_pipeline(address):
     if pd.isna(address): return address
     address = clean_text(address)
@@ -469,7 +309,7 @@ def clean_pipeline(address):
     address = title_preserve_tokens(address)
     return address
 
-# --- Pipeline avec stats (Rue) ---
+# --- Pipeline avec stats (diagnostic par règle) ---
 RULES = [
     ("01_clean_text", clean_text),
     ("02_clean_geo_postal", clean_address),
@@ -491,6 +331,9 @@ RULES = [
 ]
 
 def run_pipeline_with_stats(s: str):
+    """
+    Retourne (final_string, set(des_noms_de_regles_appliquees))
+    """
     applied = []
     cur = s
     for name, fn in RULES:
@@ -500,10 +343,37 @@ def run_pipeline_with_stats(s: str):
             applied.append(name)
     return cur, applied
 
+# ============================
+#  DÉTECTION AUTO DE COLONNE
+# ============================
+def normalize_colname(c: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', str(c).strip().lower())
+
+PREFERRED_KEYS = ["rue","adresse","address","street","street1","street_1","addr","address1","ligne1","line1"]
+
+def find_address_column(df: pd.DataFrame) -> str:
+    norm_map = {c: normalize_colname(c) for c in df.columns}
+    # EXACT
+    for key in PREFERRED_KEYS:
+        keyn = normalize_colname(key)
+        for col, norm in norm_map.items():
+            if norm == keyn:
+                return col
+    # PARTIAL
+    key_frags = ["rue","adress","address","street","addr"]
+    candidates = [col for col, norm in norm_map.items() if any(k in norm for k in key_frags)]
+    if candidates:
+        return max(candidates, key=lambda c: df[c].notna().sum())
+    raise ValueError("Colonne d'adresse introuvable. Colonnes : " + ", ".join(map(str, df.columns)))
+
 # ==================
 #  OUTILS COMPARAISON
 # ==================
 def diff_html(a: str, b: str) -> str:
+    """
+    Surlignage caractère-par-caractère (SequenceMatcher).
+    rouge = supprimé, vert = ajouté, normal = inchangé
+    """
     a = "" if pd.isna(a) else str(a)
     b = "" if pd.isna(b) else str(b)
     sm = SequenceMatcher(a=a, b=b)
@@ -523,19 +393,21 @@ def diff_html(a: str, b: str) -> str:
 #  UI PRINCIPALE
 # ==================
 st.caption("Formats supportés : CSV / XLSX • Limite ~200 MB par fichier")
+
 uploaded = st.file_uploader("Importer un fichier", type=["csv","xlsx"], label_visibility="collapsed")
 
 with st.expander("📎 Conseils", expanded=False):
     st.markdown("""
-    - Choisis une ou plusieurs colonnes **Rue/Adresse** via la liste déroulante (multi-sélection).
-    - La sortie ajoute **une colonne corrigée par colonne sélectionnée** : `NomColonne_corrigee`.
-    - Tu peux aussi corriger Ville/Province/Code postal/Pays via les cases.
+    - Le fichier doit contenir **au moins une colonne d’adresse** (ex. `Rue`, `Address`, `Adresse`).
+    - La sortie ajoute une colonne **`Rue_corrigee`**.
+    - Aucune autre colonne n’est supprimée (ex. `donorbox receipt`, `constituant id`).
     """)
 
 if not uploaded:
     st.info("👆 Déposez votre fichier pour commencer (ou cliquez sur **Browse files**).")
     st.stop()
 
+# --- Lecture robuste ---
 try:
     df = read_any(uploaded)
 except Exception as e:
@@ -545,54 +417,12 @@ except Exception as e:
 cols = list(df.columns)
 st.markdown("Colonnes détectées : " + " ".join([f'<span class="badge">{c}</span>' for c in cols]), unsafe_allow_html=True)
 
-# ============================
-#  Liste "déroulante avec cases" = MULTISELECT (Adresse seulement)
-# ============================
-norm_map = {c: normalize_colname(c) for c in cols}
-address_frags = ["rue", "adress", "address", "street", "addr", "ligne1", "line1", "street1", "address1"]
-address_cols = [c for c, norm in norm_map.items() if any(frag in norm for frag in address_frags)]
-if not address_cols:
-    address_cols = cols  # fallback
-
-# defaults
-default_cols = []
-for preferred in ["Rue", "Adresse", "Address", "Address 1", "Street", "Street 1"]:
-    if preferred in address_cols:
-        default_cols = [preferred]
-        break
-if not default_cols:
-    default_cols = [address_cols[0]]
-
-cols_rue_to_clean = st.multiselect(
-    "Colonnes Rue/Adresse à nettoyer :",
-    options=address_cols,
-    default=default_cols
-)
-
-# ============================
-#  SÉLECTION DES AUTRES COLONNES
-# ============================
-st.markdown("### ✅ Colonnes à corriger (autres champs)")
-
-def _idx(colname: str) -> int:
-    return cols.index(colname) if colname in cols else 0
-
-with st.expander("⚙️ Options Ville / Province / Code postal / Pays", expanded=True):
-    cA, cB = st.columns(2)
-
-    with cA:
-        do_ville = st.checkbox("Corriger Ville (API Québec + règles)", value=("Ville" in cols))
-        ville_col = st.selectbox("Colonne Ville :", options=cols, index=_idx("Ville"))
-
-        do_prov = st.checkbox("Corriger Région/Province (2 lettres)", value=("Région/Province" in cols))
-        prov_col = st.selectbox("Colonne Région/Province :", options=cols, index=_idx("Région/Province"))
-
-    with cB:
-        do_postal = st.checkbox("Corriger Code postal (MAJ + espace)", value=("Code postal" in cols))
-        postal_col = st.selectbox("Colonne Code postal :", options=cols, index=_idx("Code postal"))
-
-        do_pays = st.checkbox("Corriger Pays (1ère lettre majuscule)", value=("Pays" in cols))
-        pays_col = st.selectbox("Colonne Pays :", options=cols, index=_idx("Pays"))
+# Détection auto + override utilisateur
+try:
+    auto_col = find_address_column(df)
+except Exception:
+    auto_col = cols[0]
+col_rue = st.selectbox("Colonne à nettoyer :", options=cols, index=cols.index(auto_col) if auto_col in cols else 0)
 
 # --- Tabs ---
 tab_clean, tab_compare, tab_stats = st.tabs(["✨ Nettoyage", "🪄 Comparaison", "📊 Stats"])
@@ -600,43 +430,14 @@ tab_clean, tab_compare, tab_stats = st.tabs(["✨ Nettoyage", "🪄 Comparaison"
 with tab_clean:
     st.write("Aperçu initial :")
     st.dataframe(df.head(), use_container_width=True)
-
     if st.button("Lancer le nettoyage", type="primary"):
-        if not cols_rue_to_clean and not (do_ville or do_prov or do_postal or do_pays):
-            st.warning("Choisis au moins une colonne à corriger.")
-            st.stop()
-
         with st.spinner("Nettoyage en cours…"):
-            # Rue/Adresse (multi-colonnes)
-            for c in cols_rue_to_clean:
-                df[f"{c}_corrigee"] = df[c].apply(clean_pipeline)
-
-            # Autres colonnes
-            df = apply_location_cleaning(
-                df,
-                do_ville=do_ville, ville_col=ville_col,
-                do_prov=do_prov, prov_col=prov_col,
-                do_postal=do_postal, postal_col=postal_col,
-                do_pays=do_pays, pays_col=pays_col
-            )
-
-        st.success(f"Terminé ✅  |  Lignes: {len(df):,}")
-
+            df["Rue_corrigee"] = df[col_rue].apply(clean_pipeline)
+        diff_count = (df[col_rue].fillna("").astype(str).str.strip()
+                      != df["Rue_corrigee"].fillna("").astype(str).str.strip()).sum()
+        st.success(f"Terminé ✅  |  Lignes: {len(df):,}  •  Modifiées: {diff_count:,}")
         st.write("Aperçu des corrections :")
-        preview_cols = []
-        for c in cols_rue_to_clean:
-            corr = f"{c}_corrigee"
-            if corr in df.columns:
-                preview_cols += [c, corr]
-
-        for c in ["Ville_corrigee", "Region_Province_corrigee", "Code_postal_corrige", "Pays_corrige"]:
-            if c in df.columns:
-                preview_cols.append(c)
-
-        if preview_cols:
-            st.dataframe(df[preview_cols].head(30), use_container_width=True)
-        else:
-            st.info("Aucune colonne corrigée.")
+        st.dataframe(df[[col_rue, "Rue_corrigee"]].head(30), use_container_width=True)
 
         # exports
         c1, c2 = st.columns(2)
@@ -653,119 +454,115 @@ with tab_clean:
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tab_compare:
-    st.markdown("Compare **avant / après** (Rue/Adresse) avec surlignage : <span class='ins'>ajouts</span>, <span class='del'>suppressions</span>", unsafe_allow_html=True)
+    st.markdown("Compare **avant / après** avec surlignage : <span class='ins'>ajouts</span>, <span class='del'>suppressions</span>", unsafe_allow_html=True)
 
-    if not cols_rue_to_clean:
-        st.info("Choisis au moins une colonne Rue/Adresse dans la multiselect.")
+    # S'assurer que Rue_corrigee existe
+    if "Rue_corrigee" not in df.columns:
+        st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
     else:
-        col_compare = st.selectbox("Colonne à comparer :", options=cols_rue_to_clean, index=0)
-        corr_col = f"{col_compare}_corrigee"
+        only_changed = st.checkbox("Afficher uniquement les lignes modifiées", value=True)
+        search = st.text_input("Filtrer (contient)", "")
+        limit = st.slider("Nombre de lignes à afficher", min_value=10, max_value=500, value=100, step=10)
 
-        if corr_col not in df.columns:
-            st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
-        else:
-            only_changed = st.checkbox("Afficher uniquement les lignes modifiées", value=True)
-            search = st.text_input("Filtrer (contient)", "")
-            limit = st.slider("Nombre de lignes à afficher", min_value=10, max_value=500, value=100, step=10)
+        view = df.copy()
+        changed_mask = (view[col_rue].fillna("").astype(str).str.strip()
+                        != view["Rue_corrigee"].fillna("").astype(str).str.strip())
+        if only_changed:
+            view = view[changed_mask]
 
-            view = df.copy()
-            changed_mask = (view[col_compare].fillna("").astype(str).str.strip()
-                            != view[corr_col].fillna("").astype(str).str.strip())
-            if only_changed:
-                view = view[changed_mask]
+        if search.strip():
+            mask = view[col_rue].fillna("").astype(str).str.contains(search, case=False) | \
+                   view["Rue_corrigee"].fillna("").astype(str).str.contains(search, case=False)
+            view = view[mask]
 
-            if search.strip():
-                mask = view[col_compare].fillna("").astype(str).str.contains(search, case=False) | \
-                       view[corr_col].fillna("").astype(str).str.contains(search, case=False)
-                view = view[mask]
+        st.write(f"Résultats : {len(view):,} lignes")
+        sample = view.head(limit)
 
-            st.write(f"Résultats : {len(view):,} lignes")
-            sample = view.head(limit)
-
-            rows = []
-            for _, r in sample.iterrows():
-                a, b = str(r[col_compare]), str(r[corr_col])
-                html = diff_html(a, b)
-                rows.append(f"""
-                    <tr>
-                      <td>{a}</td>
-                      <td>{b}</td>
-                      <td>{html}</td>
-                    </tr>
-                """)
-            html_table = f"""
-            <table style="width:100%; border-collapse:collapse;">
-              <thead>
-                <tr style="text-align:left; border-bottom:1px solid #e5e7eb;">
-                  <th style="padding:6px 4px;">{col_compare}</th>
-                  <th style="padding:6px 4px;">{corr_col}</th>
-                  <th style="padding:6px 4px;">Différences</th>
+        # construire un tableau HTML des diffs
+        rows = []
+        for _, r in sample.iterrows():
+            a, b = str(r[col_rue]), str(r["Rue_corrigee"])
+            html = diff_html(a, b)
+            rows.append(f"""
+                <tr>
+                  <td>{a}</td>
+                  <td>{b}</td>
+                  <td>{html}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {''.join(rows)}
-              </tbody>
-            </table>
-            """
-            st.markdown(html_table, unsafe_allow_html=True)
+            """)
+        html_table = f"""
+        <table style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr style="text-align:left; border-bottom:1px solid #e5e7eb;">
+              <th style="padding:6px 4px;">{col_rue}</th>
+              <th style="padding:6px 4px;">Rue_corrigee</th>
+              <th style="padding:6px 4px;">Différences</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(rows)}
+          </tbody>
+        </table>
+        """
+        st.markdown(html_table, unsafe_allow_html=True)
 
 with tab_stats:
-    st.markdown("Stats **par règle** (uniquement pour Rue/Adresse).")
-
-    if not cols_rue_to_clean:
-        st.info("Choisis au moins une colonne Rue/Adresse dans la multiselect.")
+    st.markdown("Comptage **par règle du pipeline** (diagnostic exhaustif).")
+    if "Rue_corrigee" not in df.columns:
+        st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
     else:
-        col_stats = st.selectbox("Colonne Rue/Adresse pour les stats :", options=cols_rue_to_clean, index=0)
-        corr_stats = f"{col_stats}_corrigee"
+        # Exécuter le pipeline avec stats sur TOUTES les lignes (peut prendre un peu de temps selon la taille)
+        with st.spinner("Analyse des règles appliquées…"):
+            applied_list = []
+            finals = []
+            for s in df[col_rue].astype(str).fillna(""):
+                final, applied = run_pipeline_with_stats(s)
+                finals.append(final)
+                applied_list.append(applied)
 
-        if corr_stats not in df.columns:
-            st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
-        else:
-            with st.spinner("Analyse des règles appliquées…"):
-                applied_list = []
-                finals = []
-                for s in df[col_stats].astype(str).fillna(""):
-                    final, applied = run_pipeline_with_stats(s)
-                    finals.append(final)
-                    applied_list.append(applied)
+        # Agréger les stats
+        c = Counter()
+        for L in applied_list:
+            c.update(L)
+        stats_df = pd.DataFrame(
+            {"regle": list(c.keys()), "comptage": list(c.values())}
+        ).sort_values("comptage", ascending=False)
 
-            c = Counter()
-            for L in applied_list:
-                c.update(L)
-            stats_df = pd.DataFrame({"regle": list(c.keys()), "comptage": list(c.values())}).sort_values("comptage", ascending=False)
+        mod_count = (df[col_rue].fillna("").astype(str).str.strip()
+                     != pd.Series(finals).fillna("").astype(str).str.strip()).sum()
+        pct = 100.0 * mod_count / len(df) if len(df) else 0.0
 
-            mod_count = (df[col_stats].fillna("").astype(str).str.strip()
-                         != pd.Series(finals).fillna("").astype(str).str.strip()).sum()
-            pct = 100.0 * mod_count / len(df) if len(df) else 0.0
+        # Affichage
+        m1, m2 = st.columns(2)
+        with m1:
+            st.metric("Lignes modifiées", f"{mod_count:,}", delta=f"{pct:.1f}%")
+        with m2:
+            st.metric("Total lignes", f"{len(df):,}")
 
-            m1, m2 = st.columns(2)
-            with m1:
-                st.metric("Lignes modifiées", f"{mod_count:,}", delta=f"{pct:.1f}%")
-            with m2:
-                st.metric("Total lignes", f"{len(df):,}")
+        st.write("**Top règles appliquées :**")
+        st.dataframe(stats_df, use_container_width=True, height=360)
 
-            st.write("**Top règles appliquées :**")
-            st.dataframe(stats_df, use_container_width=True, height=360)
+        # Petit bar chart
+        try:
+            st.bar_chart(stats_df.set_index("regle")["comptage"])
+        except Exception:
+            pass
 
-            try:
-                st.bar_chart(stats_df.set_index("regle")["comptage"])
-            except Exception:
-                pass
+        # Rapport exportable : binaire par règle
+        st.write("**Rapport diagnostics (binaire par ligne et par règle)**")
+        diag_df = df.copy()
+        # colonnes binaires par règle
+        for name, _ in RULES:
+            diag_df[name] = [int(name in applied) for applied in applied_list]
+        diag_df["Rue_corrigee_stats"] = finals
 
-            st.write("**Rapport diagnostics (binaire par ligne et par règle)**")
-            diag_df = df.copy()
-            for name, _ in RULES:
-                diag_df[name] = [int(name in applied) for applied in applied_list]
-            diag_df[f"{corr_stats}_stats"] = finals
-
-            bufx = BytesIO()
-            with pd.ExcelWriter(bufx, engine="xlsxwriter") as writer:
-                diag_df.to_excel(writer, index=False, sheet_name="Diagnostics")
-                stats_df.to_excel(writer, index=False, sheet_name="Stats")
-
-            st.download_button(
-                "⬇️ Télécharger rapport diagnostics (Excel)",
-                data=bufx.getvalue(),
-                file_name="rapport_diagnostics_adresses.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        bufx = BytesIO()
+        with pd.ExcelWriter(bufx, engine="xlsxwriter") as writer:
+            diag_df.to_excel(writer, index=False, sheet_name="Diagnostics")
+            stats_df.to_excel(writer, index=False, sheet_name="Stats")
+        st.download_button(
+            "⬇️ Télécharger rapport diagnostics (Excel)",
+            data=bufx.getvalue(),
+            file_name="rapport_diagnostics_adresses.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
