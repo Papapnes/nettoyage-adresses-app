@@ -1,4 +1,3 @@
-# ...existing code...
 # Script application final
 # NOTE: AUCUNE modification sur le pipeline "Rue"
 # API utilisée UNIQUEMENT pour la colonne "Ville"
@@ -8,6 +7,7 @@ import json
 import unicodedata
 import urllib.request
 import urllib.parse
+
 import pandas as pd
 import streamlit as st
 from io import BytesIO, StringIO
@@ -45,7 +45,7 @@ footer, #MainMenu {visibility:hidden;}
 st.markdown("""
 <h1>
 🧹 <span class="app-title">Abdel_Data_Analyste_</span>
-<span style="font-size:1.4em; color:#ae0f27; font-weight:900;">SPCA</span>
+<span style="font-size:1.4em; color:#ae0f27; font-weight:900;">SPCA_V2</span>
 <span class="app-title"></span>
 </h1>
 """, unsafe_allow_html=True)
@@ -118,37 +118,14 @@ def _clean_basic_simple(x):
     s = re.sub(r"\s+", " ", s).strip()
     return s if s else None
 
-def _correct_ville_accents(name: str) -> str:
-    if not name:
-        return None
-    nk = name.strip().lower()
-    for k, v in ACCENT_CORRECTIONS.items():
-        if k.strip().lower() == nk:
-            return v
-    # fallback: try to restore common accents by unicode normalization heuristics
-    # ex: "Montreal" -> "Montréal"
-    # try to match known tokens
-    parts = name.split()
-    corrected = []
-    for p in parts:
-        p_clean = p.strip()
-        p_noacc = unicodedata.normalize("NFD", p_clean).encode("ascii", "ignore").decode("ascii")
-        if p_noacc.lower() in {k.strip().lower() for k in ACCENT_CORRECTIONS.keys()}:
-            # find mapping
-            for k, v in ACCENT_CORRECTIONS.items():
-                if k.strip().lower() == p_noacc.lower():
-                    corrected.append(v)
-                    break
-        else:
-            corrected.append(p_clean)
-    return " ".join(corrected) if corrected else name
-
 @st.cache_data(show_spinner=False)
 def fetch_ville_officielle_api(ville_query: str):
     """
     API Données Québec — retourne le nom officiel (champ 'title') si trouvé, sinon None.
     """
     try:
+        # On garde le style que tu as fourni : q=title:xxx
+        # Pour les espaces, on ajoute des guillemets
         q = f'title:"{ville_query}"' if " " in ville_query else f"title:{ville_query}"
         params = {
             "resource_id": VILLE_RESOURCE_ID,
@@ -157,8 +134,7 @@ def fetch_ville_officielle_api(ville_query: str):
         }
         url = "https://www.donneesquebec.ca/recherche/api/3/action/datastore_search?" + urllib.parse.urlencode(params)
 
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible)"})
-        with urllib.request.urlopen(req, timeout=6) as response:
+        with urllib.request.urlopen(url, timeout=6) as response:
             data = json.loads(response.read().decode("utf-8"))
 
         records = data.get("result", {}).get("records", [])
@@ -175,9 +151,7 @@ def clean_ville_api(v):
         return None
     v_title = v.title()
     official = fetch_ville_officielle_api(v_title)
-    if official:
-        return official
-    return _correct_ville_accents(v_title)
+    return official if official else v_title
 
 PROVINCE_TO_CODE = {
     # QC
@@ -255,7 +229,7 @@ def apply_location_cleaning(df: pd.DataFrame) -> pd.DataFrame:
     """
     Ajoute des colonnes corrigées :
     - Ville_corrigee (API QC)
-    - Region_Province_corrigee (QC/ON/... )
+    - Region_Province_corrigee (QC/ON/...)
     - Code_postal_corrige (H1P 2K7)
     - Pays_corrige (Canada)
     Sans toucher aux colonnes originales.
@@ -271,7 +245,7 @@ def apply_location_cleaning(df: pd.DataFrame) -> pd.DataFrame:
                 continue
             u_title = u_clean.title()
             official = fetch_ville_officielle_api(u_title)
-            mapping[u] = official if official else _correct_ville_accents(u_title)
+            mapping[u] = official if official else u_title
 
         df["Ville_corrigee"] = df["Ville"].map(mapping)
 
@@ -302,7 +276,7 @@ NOMS_FEMININS = ["Anne","Catherine","Claire","Élisabeth","Geneviève","Hélène
 VOIE_MAPPING_FULL = {
     # français
     "Av": "Avenue", "Ave": "Avenue", "Ave.": "Avenue", "Av.": "Avenue", "Avé": "Avenue",
-    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard",
+    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard","bl ": "Boulevard",
     "Ch": "Chemin", "Cte": "Côte", "Prom": "Promenade", "Terr": "Terrasse", "Pl": "Place", "Rg": "Rang",
     "Cr": "Crois", "Crois": "Croissant", "Cres": "Croissant", "Cres.": "Croissant",
     "Rt": "Route", "Rd": "Route", "Rd.": "Route",
@@ -318,7 +292,7 @@ VOIE_MAPPING_FULL = {
 
 DIRECTION_MAPPING = {
     r'\bEst\b':'E', r'\bOuest\b':'O', r'\bNord\b':'N', r'\bSud\b':'S',
-    r'\bEast\b':'E', r'\bWest\b':'O', r'\bNorth\b':'N', r'\bSouth\b':'S'
+    r'\bEast\b':'E', r'\bWest\b':'W', r'\bNorth\b':'N', r'\bSouth\b':'S'
 }
 
 ACCENT_CORRECTIONS = {
@@ -373,28 +347,23 @@ def capitalize_letter_after_number(address):
 def replace_cardinal_directions(address):
     if pd.isna(address): return address
     for pat, rep in DIRECTION_MAPPING.items():
-        address = re.sub(pat, rep, address, flags=re.IGNORECASE)
+        address = re.sub(pat, rep, address)
     address = re.sub(r'\b([NSEOW])\.\b', r'\1', address)
     return address
 
 def replace_st_with_saint_or_sainte(address):
     if pd.isna(address): return address
-    # capture St/Ste + separator + name, convert to Saint/Sainte accordingly
-    def repl(m):
-        prefix = m.group(1)
-        name = m.group(2)
-        name_key = name.title()
-        return ("Sainte-" if name_key in NOMS_FEMININS or prefix.lower().startswith("ste") else "Saint-") + name
-    address = re.sub(r'\b(Ste|St|Ste\.|St\.)[\s\-\._]+([A-Za-zÉéÈèÀàÙù\'’\-]+)', repl, address, flags=re.IGNORECASE)
+    m = re.search(r'\bSt-([A-Za-zÉéÈèÀàÙù]+)', address)
+    if m:
+        following = m.group(1)
+        return re.sub(r'\bSt-', "Sainte-" if following in NOMS_FEMININS else "Saint-", address)
     return address
 
 def expand_abbreviations(address):
     if pd.isna(address): return address
     s = address
-    # longer keys first to avoid partial replacements
-    for abbr in sorted(VOIE_MAPPING_FULL.keys(), key=lambda x: -len(x)):
-        full = VOIE_MAPPING_FULL[abbr]
-        s = re.sub(r'(?<!\w)'+re.escape(abbr)+r'(?!\w)', full, s, flags=re.IGNORECASE)
+    for abbr, full in VOIE_MAPPING_FULL.items():
+        s = re.sub(r'\b' + re.escape(abbr) + r'\b', full, s, flags=re.IGNORECASE)
     s = re.sub(r'\bCote St Luc Route\b', 'Chemin Cote St Luc', s, flags=re.IGNORECASE)
     return s
 
@@ -402,7 +371,7 @@ def correct_accents(address):
     if pd.isna(address): return address
     s = address
     for typo, corr in ACCENT_CORRECTIONS.items():
-        s = re.sub(r'\b' + re.escape(typo) + r'\b', corr, s, flags=re.IGNORECASE)
+        s = re.sub(r'\b' + re.escape(typo) + r'\b', corr, s)
     return s
 
 def correct_compounds(address):
@@ -420,9 +389,10 @@ def normalize_hyphens_apostrophes(address):
 
 def standardize_ordinal_suffix(address):
     if pd.isna(address): return address
-    # Simplifier suffixes ordinaux courants
-    address = re.sub(r'\b1(?:er|re|ère|e|ème|eme)\b', '1RE', address, flags=re.IGNORECASE)
-    address = re.sub(r'\b([2-9]|[1-9][0-9])(?:e|ème|eme)\b', lambda m: f"{m.group(1)}E", address, flags=re.IGNORECASE)
+    address = re.sub(r'\b1([èeé]re|er|re)\b', '1RE', address, flags=re.IGNORECASE)
+    for n in range(2, 10):
+        address = re.sub(rf'\b{n}([ìi]eme|ieme|ième|[èeé]me|e)\b', f'{n}E', address, flags=re.IGNORECASE)
+    address = re.sub(r'\b([1-9][0-9])([èeé]me|e)\b', lambda m: f"{m.group(1)}E", address, flags=re.IGNORECASE)
     return address
 
 def move_trailing_apt_to_front(address):
@@ -570,23 +540,18 @@ def diff_html(a: str, b: str) -> str:
     """
     a = "" if pd.isna(a) else str(a)
     b = "" if pd.isna(b) else str(b)
-    sm = SequenceMatcher(None, a, b)
+    sm = SequenceMatcher(a=a, b=b)
     out = []
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == 'equal':
-            content = b[j1:j2].replace(" ", "&nbsp;")
-            out.append(f'<span class="eq">{content}</span>')
+            out.append(f'<span class="eq">{b[j1:j2]}</span>')
         elif tag == 'insert':
-            content = b[j1:j2].replace(" ", "&nbsp;")
-            out.append(f'<span class="ins">{content}</span>')
+            out.append(f'<span class="ins">{b[j1:j2]}</span>')
         elif tag == 'delete':
-            content = a[i1:i2].replace(" ", "&nbsp;")
-            out.append(f'<span class="del">{content}</span>')
+            out.append(f'<span class="del">{a[i1:i2]}</span>')
         elif tag == 'replace':
-            delc = a[i1:i2].replace(" ", "&nbsp;")
-            insc = b[j1:j2].replace(" ", "&nbsp;")
-            out.append(f'<span class="del">{delc}</span><span class="ins">{insc}</span>')
-    return '<div class="diff">' + "".join(out) + '</div>'
+            out.append(f'<span class="del">{a[i1:i2]}</span><span class="ins">{b[j1:j2]}</span>')
+    return '<div class="diff">' + "".join(out).replace(" ", "&nbsp;") + '</div>'
 
 # ==================
 #  UI PRINCIPALE
@@ -614,7 +579,7 @@ except Exception as e:
     st.stop()
 
 cols = list(df.columns)
-st.markdown("Colonnes détectées : " + " ".join([f'<span class=\"badge\">{c}</span>' for c in cols]), unsafe_allow_html=True)
+st.markdown("Colonnes détectées : " + " ".join([f'<span class="badge">{c}</span>' for c in cols]), unsafe_allow_html=True)
 
 # Détection auto + override utilisateur
 try:
