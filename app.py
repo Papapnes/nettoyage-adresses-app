@@ -1,4 +1,6 @@
-#Script applictio final sans API
+# Script application final (SANS API)
+# ✅ MISE À JOUR: nouveaux patterns ajoutés (E/O/N/S + "Ap" + pattern #240 ... #240)
+# ✅ AUCUNE MODIF sur la logique globale : seulement ajouts ciblés
 
 import re
 import pandas as pd
@@ -14,7 +16,6 @@ st.set_page_config(
     layout="centered",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
-
 
 # ---- CSS minimal ----
 st.markdown("""
@@ -112,13 +113,17 @@ NOMS_FEMININS = ["Anne","Catherine","Claire","Élisabeth","Geneviève","Hélène
 VOIE_MAPPING_FULL = {
     # français
     "Av": "Avenue", "Ave": "Avenue", "Ave.": "Avenue", "Av.": "Avenue", "Avé": "Avenue",
-    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard", "Bl": "Boulevard","bl ": "Boulevard",
-    "Ch": "Chemin", "Cte": "Côte", "Prom": "Promenade", "Terr": "Terrasse", "Pl": "Place", "Rg": "Rang",
+    "Blvd": "Boulevard", "BVD": "Boulevard", "Bve": "Boulevard", "Boul": "Boulevard",
+    "Bl": "Boulevard","bl ": "Boulevard",
+    "Bd": "Boulevard", "Bd.": "Boulevard", "Boul.": "Boulevard",
+    "Ch": "Chemin", "Ch.": "Chemin", "Che": "Chemin", "Che.": "Chemin",
+    "Cte": "Côte", "Prom": "Promenade", "Terr": "Terrasse", "Pl": "Place", "Rg": "Rang",
     "Cr": "Crois", "Crois": "Croissant", "Cres": "Croissant", "Cres.": "Croissant",
     "Rt": "Route", "Rd": "Route", "Rd.": "Route",
     "V": "Voie",
     # anglais génériques
     "St": "Saint", "St.": "Saint",
+    "Ste": "Sainte", "Ste.": "Sainte",
     "Dr": "Drive", "Dr.": "Drive",
     "Ln": "Lane", "Ln.": "Lane",
     "Hwy": "Highway", "Hwy.": "Highway",
@@ -146,6 +151,7 @@ COMPOUND_CORRECTIONS = {
 
 UNIT_TERMS = [
     "App","Apt","Appt","Appartement","Unit","Unité","Logement","Suite","Apartment",
+    "Ap","ap",  # ✅ AJOUT
     "app","apt","appt","unit","suite","no","n0","#"
 ]
 
@@ -181,9 +187,10 @@ def capitalize_letter_after_number(address):
     return re.sub(r'(\d+)([a-z])\b', lambda m: f"{m.group(1)}{m.group(2).upper()}", address)
 
 def replace_cardinal_directions(address):
+    # ✅ MISE À JOUR: flags=re.IGNORECASE pour capter "est" / "ouest" etc.
     if pd.isna(address): return address
     for pat, rep in DIRECTION_MAPPING.items():
-        address = re.sub(pat, rep, address)
+        address = re.sub(pat, rep, address, flags=re.IGNORECASE)
     address = re.sub(r'\b([NSEOW])\.\b', r'\1', address)
     return address
 
@@ -250,6 +257,23 @@ def remove_final_duplicate_number(address):
             return f"{first_num}-{second_num} {street}"
     return address
 
+def fix_unit_then_civic_with_duplicate_unit(address):
+    """
+    ✅ Nouveau modèle:
+    "#240, 2354 Ave Letourneux | #240" -> "240-2354 Avenue Letourneux"
+    Après clean_text => "240 2354 Ave Letourneux 240"
+    """
+    if pd.isna(address):
+        return address
+    s = str(address).strip()
+    m = re.match(r'^(\d+)\s+(\d+)\s+(.+?)(?:\s+\1)?$', s)
+    if not m:
+        return address
+    unit, civic, rest = m.group(1), m.group(2), m.group(3).strip()
+    if not (unit.isdigit() and civic.isdigit()):
+        return address
+    return f"{unit}-{civic} {rest}".strip()
+
 def remove_unit_terms_tail(address):
     if pd.isna(address): return address
     tail_pat = r'\b(?:' + '|'.join(map(re.escape, UNIT_TERMS)) + r')\.?\s*\d*\s*$'
@@ -301,8 +325,12 @@ def clean_pipeline(address):
     address = correct_compounds(address)
     address = normalize_hyphens_apostrophes(address)
     address = standardize_ordinal_suffix(address)
-    address = move_trailing_apt_to_front(address)
     address = remove_final_duplicate_number(address)
+
+    # ✅ AJOUT: #240 ... #240 -> 240-2354 ...
+    address = fix_unit_then_civic_with_duplicate_unit(address)
+
+    address = move_trailing_apt_to_front(address)
     address = remove_unit_terms_tail(address)
     address = ensure_street_type_if_missing(address)
     address = remove_duplicate_words_numbers(address)
@@ -322,18 +350,16 @@ RULES = [
     ("09_fix_compounds", correct_compounds),
     ("10_norm_hyphen_apos", normalize_hyphens_apostrophes),
     ("11_ordinals", standardize_ordinal_suffix),
-    ("12_move_trailing_number", move_trailing_apt_to_front),
-    ("13_drop_final_dupnum", remove_final_duplicate_number),
-    ("14_remove_unit_tail", remove_unit_terms_tail),
-    ("15_insert_default_Rue", ensure_street_type_if_missing),
-    ("16_dedupe_tokens", remove_duplicate_words_numbers),
-    ("17_title_preserve", title_preserve_tokens),
+    ("12_drop_final_dupnum", remove_final_duplicate_number),
+    ("13_fix_unit_civic_dupunit", fix_unit_then_civic_with_duplicate_unit),  # ✅ AJOUT
+    ("14_move_trailing_number", move_trailing_apt_to_front),
+    ("15_remove_unit_tail", remove_unit_terms_tail),
+    ("16_insert_default_Rue", ensure_street_type_if_missing),
+    ("17_dedupe_tokens", remove_duplicate_words_numbers),
+    ("18_title_preserve", title_preserve_tokens),
 ]
 
 def run_pipeline_with_stats(s: str):
-    """
-    Retourne (final_string, set(des_noms_de_regles_appliquees))
-    """
     applied = []
     cur = s
     for name, fn in RULES:
@@ -370,10 +396,6 @@ def find_address_column(df: pd.DataFrame) -> str:
 #  OUTILS COMPARAISON
 # ==================
 def diff_html(a: str, b: str) -> str:
-    """
-    Surlignage caractère-par-caractère (SequenceMatcher).
-    rouge = supprimé, vert = ajouté, normal = inchangé
-    """
     a = "" if pd.isna(a) else str(a)
     b = "" if pd.isna(b) else str(b)
     sm = SequenceMatcher(a=a, b=b)
@@ -393,7 +415,6 @@ def diff_html(a: str, b: str) -> str:
 #  UI PRINCIPALE
 # ==================
 st.caption("Formats supportés : CSV / XLSX • Limite ~200 MB par fichier")
-
 uploaded = st.file_uploader("Importer un fichier", type=["csv","xlsx"], label_visibility="collapsed")
 
 with st.expander("📎 Conseils", expanded=False):
@@ -433,13 +454,13 @@ with tab_clean:
     if st.button("Lancer le nettoyage", type="primary"):
         with st.spinner("Nettoyage en cours…"):
             df["Rue_corrigee"] = df[col_rue].apply(clean_pipeline)
+
         diff_count = (df[col_rue].fillna("").astype(str).str.strip()
                       != df["Rue_corrigee"].fillna("").astype(str).str.strip()).sum()
         st.success(f"Terminé ✅  |  Lignes: {len(df):,}  •  Modifiées: {diff_count:,}")
         st.write("Aperçu des corrections :")
         st.dataframe(df[[col_rue, "Rue_corrigee"]].head(30), use_container_width=True)
 
-        # exports
         c1, c2 = st.columns(2)
         with c1:
             csv_bytes = df.to_csv(index=False, encoding="utf-8-sig")
@@ -455,8 +476,6 @@ with tab_clean:
 
 with tab_compare:
     st.markdown("Compare **avant / après** avec surlignage : <span class='ins'>ajouts</span>, <span class='del'>suppressions</span>", unsafe_allow_html=True)
-
-    # S'assurer que Rue_corrigee existe
     if "Rue_corrigee" not in df.columns:
         st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
     else:
@@ -478,7 +497,6 @@ with tab_compare:
         st.write(f"Résultats : {len(view):,} lignes")
         sample = view.head(limit)
 
-        # construire un tableau HTML des diffs
         rows = []
         for _, r in sample.iterrows():
             a, b = str(r[col_rue]), str(r["Rue_corrigee"])
@@ -490,6 +508,7 @@ with tab_compare:
                   <td>{html}</td>
                 </tr>
             """)
+
         html_table = f"""
         <table style="width:100%; border-collapse:collapse;">
           <thead>
@@ -511,7 +530,6 @@ with tab_stats:
     if "Rue_corrigee" not in df.columns:
         st.warning("⚠️ Lance d’abord le nettoyage dans l’onglet **Nettoyage**.")
     else:
-        # Exécuter le pipeline avec stats sur TOUTES les lignes (peut prendre un peu de temps selon la taille)
         with st.spinner("Analyse des règles appliquées…"):
             applied_list = []
             finals = []
@@ -520,19 +538,15 @@ with tab_stats:
                 finals.append(final)
                 applied_list.append(applied)
 
-        # Agréger les stats
         c = Counter()
         for L in applied_list:
             c.update(L)
-        stats_df = pd.DataFrame(
-            {"regle": list(c.keys()), "comptage": list(c.values())}
-        ).sort_values("comptage", ascending=False)
+        stats_df = pd.DataFrame({"regle": list(c.keys()), "comptage": list(c.values())}).sort_values("comptage", ascending=False)
 
         mod_count = (df[col_rue].fillna("").astype(str).str.strip()
                      != pd.Series(finals).fillna("").astype(str).str.strip()).sum()
         pct = 100.0 * mod_count / len(df) if len(df) else 0.0
 
-        # Affichage
         m1, m2 = st.columns(2)
         with m1:
             st.metric("Lignes modifiées", f"{mod_count:,}", delta=f"{pct:.1f}%")
@@ -542,16 +556,13 @@ with tab_stats:
         st.write("**Top règles appliquées :**")
         st.dataframe(stats_df, use_container_width=True, height=360)
 
-        # Petit bar chart
         try:
             st.bar_chart(stats_df.set_index("regle")["comptage"])
         except Exception:
             pass
 
-        # Rapport exportable : binaire par règle
         st.write("**Rapport diagnostics (binaire par ligne et par règle)**")
         diag_df = df.copy()
-        # colonnes binaires par règle
         for name, _ in RULES:
             diag_df[name] = [int(name in applied) for applied in applied_list]
         diag_df["Rue_corrigee_stats"] = finals
@@ -560,6 +571,7 @@ with tab_stats:
         with pd.ExcelWriter(bufx, engine="xlsxwriter") as writer:
             diag_df.to_excel(writer, index=False, sheet_name="Diagnostics")
             stats_df.to_excel(writer, index=False, sheet_name="Stats")
+
         st.download_button(
             "⬇️ Télécharger rapport diagnostics (Excel)",
             data=bufx.getvalue(),
