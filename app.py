@@ -44,8 +44,8 @@ footer, #MainMenu {visibility:hidden;}
 # ---- En-tête ----
 st.markdown("""
 <h1>
-🧹 <span class="app-title">Abdel_Data_Analyste_</span>
-<span style="font-size:1.4em; color:#ae0f27; font-weight:900;">Consultant</span>
+🧹 <span class="app-title">Clean_address_by_Abdel</span>
+<span style="font-size:1.4em; color:#ae0f27; font-weight:900;">Consultant_BI</span>
 <span class="app-title"></span>
 </h1>
 """, unsafe_allow_html=True)
